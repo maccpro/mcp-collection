@@ -1,5 +1,14 @@
 #!/usr/bin/env node
+import path from 'node:path';
 import readline from 'node:readline';
+import { fileURLToPath } from 'node:url';
+import { loadEnv } from './env-loader.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Automatically load local .env if present
+loadEnv(__dirname);
 
 const API_URL = process.env.MIMO_API_URL || 'https://api.xiaomimimo.com/v1/chat/completions';
 const MODEL = process.env.MIMO_MODEL || 'mimo-v2.6-pro';
@@ -7,7 +16,7 @@ const MODEL = process.env.MIMO_MODEL || 'mimo-v2.6-pro';
 const TOOLS = [
   {
     name: 'mimo_generate_code',
-    description: 'Dedicated application code generator powered by Xiaomi MiMo (mimo-v2.6-pro). Generates, refactors, and implements application source code, classes, methods, algorithms, and business logic. Note: Architecture, DevOps/Docker/Nginx/Shell, testing/TDD, and log analysis are exclusively handled by the primary Antigravity agent.',
+    description: 'Dedicated application code generator powered by Xiaomi MiMo (mimo-v2.6-pro) with automatic fallback support. Generates, refactors, and implements application source code, classes, methods, algorithms, and business logic. Note: Architecture, DevOps/Docker/Nginx/Shell, testing/TDD, and log analysis are exclusively handled by the primary Antigravity agent.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -37,27 +46,17 @@ const TOOLS = [
   }
 ];
 
-async function callMiMoApi(messages, options = {}) {
-  const apiKey = process.env.MIMO_API_KEY;
-  if (!apiKey || apiKey.trim() === '' || apiKey.includes('YOUR_MIMO_API_KEY')) {
-    throw new Error('MIMO_API_KEY is not set or invalid. Please configure your actual API key in mcp_config.json or environment variables.');
-  }
-
-  const isThinkingExplicitlyDisabled = process.env.MIMO_THINKING === 'disabled' || options.thinking_enabled === false;
-  const thinkingSetting = isThinkingExplicitlyDisabled ? 'disabled' : (process.env.MIMO_THINKING || 'enabled');
-  const thinking = { type: thinkingSetting === 'disabled' ? 'disabled' : 'enabled' };
-  const maxTokens = options.max_tokens || 4096;
-
-  const apiUrl = process.env.MIMO_API_URL || API_URL;
-  const model = process.env.MIMO_MODEL || MODEL;
-
+async function callSingleProvider(apiUrl, apiKey, model, messages, maxTokens, thinking) {
   const payload = {
     model: model,
     messages,
     max_completion_tokens: maxTokens,
-    stream: false,
-    thinking
+    stream: false
   };
+
+  if (thinking) {
+    payload.thinking = thinking;
+  }
 
   const response = await fetch(apiUrl, {
     method: 'POST',
@@ -71,16 +70,51 @@ async function callMiMoApi(messages, options = {}) {
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`MiMo API request failed (${response.status} ${response.statusText}): ${errorText}`);
+    throw new Error(`API request failed (${response.status} ${response.statusText}): ${errorText}`);
   }
 
   const data = await response.json();
   const choice = data.choices && data.choices[0];
   if (!choice || !choice.message) {
-    throw new Error(`Invalid response structure from MiMo API: ${JSON.stringify(data)}`);
+    throw new Error(`Invalid response structure from API: ${JSON.stringify(data)}`);
   }
 
   return choice.message.content || '';
+}
+
+async function callMiMoApi(messages, options = {}) {
+  const apiKey = process.env.MIMO_API_KEY;
+  const isThinkingExplicitlyDisabled = process.env.MIMO_THINKING === 'disabled' || options.thinking_enabled === false;
+  const thinkingSetting = isThinkingExplicitlyDisabled ? 'disabled' : (process.env.MIMO_THINKING || 'enabled');
+  const thinking = { type: thinkingSetting === 'disabled' ? 'disabled' : 'enabled' };
+  const maxTokens = options.max_tokens || 4096;
+
+  const apiUrl = process.env.MIMO_API_URL || API_URL;
+  const model = process.env.MIMO_MODEL || MODEL;
+
+  // 1. Attempt Primary MiMo API
+  if (apiKey && apiKey.trim() !== '' && !apiKey.includes('YOUR_MIMO_API_KEY')) {
+    try {
+      return await callSingleProvider(apiUrl, apiKey, model, messages, maxTokens, thinking);
+    } catch (primaryErr) {
+      const fallbackApiKey = process.env.MIMO_FALLBACK_API_KEY;
+      if (!fallbackApiKey || fallbackApiKey.trim() === '') {
+        throw new Error(`MiMo primary request failed (${primaryErr.message}) and no MIMO_FALLBACK_API_KEY is configured.`);
+      }
+      // Log/continue to fallback
+    }
+  }
+
+  // 2. Fallback Provider (e.g. DeepSeek or OpenAI-compatible)
+  const fallbackApiKey = process.env.MIMO_FALLBACK_API_KEY;
+  if (!fallbackApiKey || fallbackApiKey.trim() === '') {
+    throw new Error('MIMO_API_KEY is not set or invalid, and no MIMO_FALLBACK_API_KEY is configured. Please configure .env or environment variables.');
+  }
+
+  const fallbackUrl = process.env.MIMO_FALLBACK_API_URL || 'https://api.deepseek.com/v1/chat/completions';
+  const fallbackModel = process.env.MIMO_FALLBACK_MODEL || 'deepseek-v4-flash';
+
+  return await callSingleProvider(fallbackUrl, fallbackApiKey, fallbackModel, messages, maxTokens, null);
 }
 
 async function handleToolCall(name, args) {

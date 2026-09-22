@@ -17,29 +17,24 @@ Designed specifically for AI coding assistants like **Google Antigravity**, **Cl
 
 ## 🛠️ Configuration & Setup
 
-### 1. Google Antigravity
-Open `mcp_config.json` (or click **Open MCP Config** under Settings > Customizations):
+### 1. Zero-Config Client Setup (Recommended)
+`mimo-coder` automatically loads environment variables from its local `.env` file (copied from `.env.example`).
 
+In Google Antigravity (`mcp_config.json`):
 ```json
 {
   "mcpServers": {
     "mimo-coder": {
       "command": "node",
       "args": [
-        "/absolute/path/to/mcp-collection/servers/mimo-coder/mimo-server.js"
-      ],
-      "env": {
-        "MIMO_API_KEY": "your_mimo_api_key_here",
-        "MIMO_API_URL": "https://api.xiaomimimo.com/v1/chat/completions",
-        "MIMO_MODEL": "mimo-v2.6-pro",
-        "MIMO_THINKING": "enabled"
-      }
+        "c:/Users/JoypurHost/Desktop/mcp-collection/servers/mimo-coder/mimo-server.js"
+      ]
     }
   }
 }
 ```
 
-### 2. Claude Desktop (`claude_desktop_config.json`)
+In Claude Desktop (`claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
@@ -47,13 +42,29 @@ Open `mcp_config.json` (or click **Open MCP Config** under Settings > Customizat
       "command": "node",
       "args": [
         "/absolute/path/to/mcp-collection/servers/mimo-coder/mimo-server.js"
-      ],
-      "env": {
-        "MIMO_API_KEY": "your_mimo_api_key_here"
-      }
+      ]
     }
   }
 }
+```
+
+---
+
+### 2. Local `.env` File Configuration
+Create a `.env` file in `servers/mimo-coder/.env` (or copy from `.env.example`):
+
+```env
+# Primary: Xiaomi MiMo
+MIMO_API_KEY=your_actual_mimo_api_key_here
+MIMO_API_URL=https://api.xiaomimimo.com/v1/chat/completions
+MIMO_MODEL=mimo-v2.6-pro
+MIMO_THINKING=enabled
+
+# Fallback: DeepSeek / OpenAI-compatible
+# Automatically called if primary MiMo API request fails or is rate-limited
+MIMO_FALLBACK_API_KEY=your_fallback_api_key_here
+MIMO_FALLBACK_API_URL=https://api.deepseek.com/v1/chat/completions
+MIMO_FALLBACK_MODEL=deepseek-v4-flash
 ```
 
 ---
@@ -66,6 +77,9 @@ Open `mcp_config.json` (or click **Open MCP Config** under Settings > Customizat
 | `MIMO_API_URL` | Endpoint for chat completions | `https://api.xiaomimimo.com/v1/chat/completions` |
 | `MIMO_MODEL` | Target MiMo model name | `mimo-v2.6-pro` |
 | `MIMO_THINKING` | Deep reasoning mode (`enabled` or `disabled`) | `enabled` |
+| `MIMO_FALLBACK_API_KEY` | Optional fallback provider API key (e.g. DeepSeek) | None |
+| `MIMO_FALLBACK_API_URL` | Optional fallback endpoint | `https://api.deepseek.com/v1/chat/completions` |
+| `MIMO_FALLBACK_MODEL` | Optional fallback model name | `deepseek-v4-flash` |
 
 ---
 
