@@ -131,5 +131,15 @@ flowchart TD
 
 ---
 
+## 🤖 Antigravity Automated Enforcement Rule
+
+To ensure Antigravity automatically and mandatorily enforces this quality gate on every coding task, bug fix, or refactor without manual prompts, the following rule is enforced in Antigravity's global rules (`AGENTS.md`):
+
+```markdown
+- **Auto Architecture Gate (Mandatory for Laravel)**: Always run `architecture_gate` from `laravel-code-pattern` on all modified Laravel files before Git commit. If `FAIL`, fix violations immediately and re-run. Never commit unless the gate returns `PASS`.
+```
+
+---
+
 ## 📄 License
 MIT © MaccPro Team
