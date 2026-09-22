@@ -96,5 +96,15 @@ Generates, refactors, and implements application source code and business logic.
 
 ---
 
+## 🤖 Antigravity Automated Enforcement Rule
+
+To automatically offload application code generation to Xiaomi MiMo and preserve primary assistant quota without requiring manual prompts, the following rule is configured in Antigravity's global rules (`AGENTS.md`):
+
+```markdown
+- **Auto Code Generation Offload (MiMo Coder)**: Offload routine application code generation, classes, and business logic to `mimo_generate_code` from `mimo-coder` to preserve primary quota. Architecture, system planning, shell execution, and testing remain strictly with Antigravity.
+```
+
+---
+
 ## 📄 License
 MIT
