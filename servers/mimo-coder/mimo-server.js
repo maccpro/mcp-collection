@@ -25,7 +25,7 @@ const TOOLS = [
         },
         thinking_enabled: {
           type: 'boolean',
-          description: 'Whether to enable model deep thinking/reasoning. Default is false.'
+          description: 'Whether to enable model deep thinking/reasoning. Default is true.'
         },
         max_tokens: {
           type: 'number',
@@ -43,8 +43,9 @@ async function callMiMoApi(messages, options = {}) {
     throw new Error('MIMO_API_KEY is not set or invalid. Please configure your actual API key in mcp_config.json or environment variables.');
   }
 
-  const thinkingSetting = process.env.MIMO_THINKING || (options.thinking_enabled ? 'enabled' : 'disabled');
-  const thinking = { type: thinkingSetting === 'enabled' ? 'enabled' : 'disabled' };
+  const isThinkingExplicitlyDisabled = process.env.MIMO_THINKING === 'disabled' || options.thinking_enabled === false;
+  const thinkingSetting = isThinkingExplicitlyDisabled ? 'disabled' : (process.env.MIMO_THINKING || 'enabled');
+  const thinking = { type: thinkingSetting === 'disabled' ? 'disabled' : 'enabled' };
   const maxTokens = options.max_tokens || 4096;
 
   const apiUrl = process.env.MIMO_API_URL || API_URL;

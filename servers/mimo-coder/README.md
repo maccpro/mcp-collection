@@ -32,7 +32,7 @@ Open `mcp_config.json` (or click **Open MCP Config** under Settings > Customizat
         "MIMO_API_KEY": "your_mimo_api_key_here",
         "MIMO_API_URL": "https://api.xiaomimimo.com/v1/chat/completions",
         "MIMO_MODEL": "mimo-v2.6-pro",
-        "MIMO_THINKING": "disabled"
+        "MIMO_THINKING": "enabled"
       }
     }
   }
@@ -65,7 +65,7 @@ Open `mcp_config.json` (or click **Open MCP Config** under Settings > Customizat
 | `MIMO_API_KEY` | **Required.** Your Xiaomi MiMo API Key | None |
 | `MIMO_API_URL` | Endpoint for chat completions | `https://api.xiaomimimo.com/v1/chat/completions` |
 | `MIMO_MODEL` | Target MiMo model name | `mimo-v2.6-pro` |
-| `MIMO_THINKING` | Deep reasoning mode (`enabled` or `disabled`) | `disabled` |
+| `MIMO_THINKING` | Deep reasoning mode (`enabled` or `disabled`) | `enabled` |
 
 ---
 
@@ -77,7 +77,7 @@ Generates, refactors, and implements application source code and business logic.
   - `prompt` (string, required): Instructions on what code to write or refactor.
   - `context` (string, optional): Existing code, file snippets, or schema context.
   - `system_prompt` (string, optional): Custom persona/instructions for code generation.
-  - `thinking_enabled` (boolean, optional): Enable reasoning tokens for complex algorithmic tasks.
+  - `thinking_enabled` (boolean, optional): Enable reasoning tokens for complex algorithmic tasks (default: `true`).
   - `max_tokens` (number, optional): Maximum tokens to generate (default: `4096`).
 
 ---
