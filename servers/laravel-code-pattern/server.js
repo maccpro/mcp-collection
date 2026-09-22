@@ -10,9 +10,13 @@ import { CrossModuleChecker } from './engine/cross-module.js';
 import { Reporter } from './engine/reporter.js';
 import { ExternalRunner } from './engine/external-runner.js';
 import { SemanticReviewer } from './engine/semantic-reviewer.js';
+import { loadEnv } from './engine/env-loader.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Automatically load local .env if present
+loadEnv(__dirname);
 
 // Load canonical default configuration
 const configPath = path.join(__dirname, 'config', 'default-config.json');

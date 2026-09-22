@@ -54,6 +54,21 @@ Open `mcp_config.json` (under Settings > Customizations > Open MCP Config):
 }
 ```
 
+### 3. Individual `.env` File Configuration
+The server automatically loads environment settings from its own local `.env` file (copied from `.env.example`). This keeps your client configuration clean and avoids pasting keys into `mcp_config.json`:
+
+```env
+# Primary Reviewer (Xiaomi MiMo)
+LARAVEL_PATTERN_API_KEY=your_actual_key
+LARAVEL_PATTERN_API_URL=https://api.xiaomimimo.com/v1/chat/completions
+LARAVEL_PATTERN_MODEL=mimo-v2.6
+
+# Fallback Reviewer (DeepSeek)
+LARAVEL_PATTERN_FALLBACK_API_KEY=your_deepseek_key
+LARAVEL_PATTERN_FALLBACK_API_URL=https://api.deepseek.com/v1/chat/completions
+LARAVEL_PATTERN_FALLBACK_MODEL=deepseek-v4-flash
+```
+
 ---
 
 ## 📦 Exposed MCP Tools

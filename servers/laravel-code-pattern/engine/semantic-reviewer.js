@@ -37,17 +37,19 @@ export class SemanticReviewer {
       };
     }
 
-    const apiKey = process.env.MIMO_API_KEY || process.env.OPENAI_API_KEY;
+    const apiKey = process.env.LARAVEL_PATTERN_API_KEY || process.env.MIMO_API_KEY || process.env.OPENAI_API_KEY;
     if (!apiKey) {
       return {
         status: 'SKIPPED',
-        reason: 'No API key configured for AI reviewer (MIMO_API_KEY or OPENAI_API_KEY).'
+        reason: 'No API key configured for AI reviewer (LARAVEL_PATTERN_API_KEY or MIMO_API_KEY).'
       };
     }
 
-    const apiUrl = process.env.MIMO_API_URL || 'https://api.xiaomimimo.com/v1/chat/completions';
-    const primaryModel = aiConfig.model || 'mimo-v2.6-pro';
-    const fallbackModel = aiConfig.fallback_model || 'deepseek-v4-flash';
+    const apiUrl = process.env.LARAVEL_PATTERN_API_URL || process.env.MIMO_API_URL || 'https://api.xiaomimimo.com/v1/chat/completions';
+    const primaryModel = process.env.LARAVEL_PATTERN_MODEL || aiConfig.model || 'mimo-v2.6';
+    const fallbackModel = process.env.LARAVEL_PATTERN_FALLBACK_MODEL || aiConfig.fallback_model || 'deepseek-v4-flash';
+    const fallbackApiKey = process.env.LARAVEL_PATTERN_FALLBACK_API_KEY || apiKey;
+    const fallbackApiUrl = process.env.LARAVEL_PATTERN_FALLBACK_API_URL || apiUrl;
 
     const systemPrompt = `You are a strict Laravel Clean Architecture Semantic Reviewer.
 Evaluate the provided minimal PHP code snippet for subtle semantic risks:
@@ -80,7 +82,7 @@ Output a strict JSON object: { "semantic_risk": boolean, "severity": "WARNING"|"
       // Attempt fallback model
       try {
         payload.model = fallbackModel;
-        const fallbackResult = await this.callApi(apiUrl, apiKey, payload);
+        const fallbackResult = await this.callApi(fallbackApiUrl, fallbackApiKey, payload);
         return {
           status: 'COMPLETED',
           model_used: fallbackModel,
