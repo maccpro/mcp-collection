@@ -1,0 +1,26 @@
+{
+  "name": "@maccpro/laravel-code-pattern-mcp",
+  "version": "2.0.0",
+  "description": "Deterministic-first Laravel Clean Architecture & Code Pattern Quality Gate MCP Server for Antigravity & AI Assistants",
+  "main": "server.js",
+  "type": "module",
+  "bin": {
+    "laravel-code-pattern": "./server.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/run-tests.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "laravel",
+    "clean-architecture",
+    "quality-gate",
+    "antigravity",
+    "mimo",
+    "php"
+  ],
+  "author": "MaccPro Team",
+  "license": "MIT"
+}

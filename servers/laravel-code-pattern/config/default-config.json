@@ -1,0 +1,71 @@
+{
+  "name": "laravel-code-pattern-mcp",
+  "version": "2.0.0",
+  "policy": {
+    "blocking": [
+      "CRITICAL",
+      "ERROR"
+    ],
+    "nonBlocking": [
+      "WARNING",
+      "INFO"
+    ],
+    "failOnWarnings": false,
+    "maxChangedFiles": 80,
+    "maxFileBytes": 500000
+  },
+  "architecture": {
+    "flow": [
+      "Controller",
+      "FormRequest",
+      "DTO",
+      "Action",
+      "Service",
+      "RepositoryInterface",
+      "Repository",
+      "Model",
+      "Database"
+    ],
+    "serviceOptional": true,
+    "rules": {
+      "controller_direct_model": "ERROR",
+      "controller_direct_db": "ERROR",
+      "controller_business_logic": "WARNING",
+      "form_request_persistence": "ERROR",
+      "form_request_business_logic": "WARNING",
+      "dto_persistence": "ERROR",
+      "repository_http_dependency": "ERROR",
+      "repository_business_logic": "WARNING",
+      "action_too_large": "WARNING",
+      "service_too_large": "WARNING",
+      "cross_module_internal_dependency": "ERROR"
+    }
+  },
+  "paths": {
+    "controllers": "app/Modules/*/Http/Controllers",
+    "requests": "app/Modules/*/Http/Requests",
+    "dtos": "app/Modules/*/DTOs",
+    "actions": "app/Modules/*/Actions",
+    "services": "app/Modules/*/Services",
+    "repositories": "app/Modules/*/Repositories",
+    "models": "app/Modules/*/Models"
+  },
+  "externalChecks": {
+    "phpstan": true,
+    "pint": true,
+    "pest": false
+  },
+  "ai_reviewer": {
+    "enabled": true,
+    "provider": "openai compatibility api",
+    "fallback_provider": "openai compatibility api",
+    "api": "responses",
+    "model": "mimo-v2.6",
+    "fallback_model": "deepseek-v4-flash",
+    "mode": "semantic-only",
+    "trigger": "only_when_static_analysis_is_clean_and_semantic_risk_is_detected",
+    "send_full_repository": false,
+    "send_only_minimal_context": true,
+    "structured_output": true
+  }
+}
