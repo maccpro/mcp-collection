@@ -1,0 +1,26 @@
+{
+  "name": "@maccpro/ui-ux-designer-mcp",
+  "version": "1.0.0",
+  "description": "Frontend UI/UX Design Suggestion, Tailwind CSS & Shadcn UI Pattern Generator with OpenAI API Compatibility",
+  "main": "server.js",
+  "type": "module",
+  "bin": {
+    "ui-ux-designer": "./server.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/run-tests.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ui-ux",
+    "frontend-design",
+    "tailwind-css",
+    "shadcn-ui",
+    "openai-compatible",
+    "antigravity"
+  ],
+  "author": "MaccPro Team",
+  "license": "MIT"
+}
