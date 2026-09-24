@@ -248,7 +248,7 @@ rl.on('line', async (line) => {
               tools: {}
             },
             serverInfo: {
-              name: 'ui-ux-designer',
+              name: 'ui-ux-mcp',
               version: '1.0.0'
             }
           }

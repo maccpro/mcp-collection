@@ -1,4 +1,4 @@
-# UI/UX Designer MCP Server
+# UI/UX MCP Server (`ui-ux-mcp`)
 
 Professional, OpenAI-compatible Model Context Protocol (MCP) server for **Google Antigravity**, **Claude Desktop**, and **Cursor** to generate high-converting frontend UI/UX designs, Tailwind CSS & Shadcn UI component patterns, accessibility (a11y) audits, and design systems.
 
@@ -23,10 +23,10 @@ Open `mcp_config.json` (under Settings > Customizations > Open MCP Config):
 ```json
 {
   "mcpServers": {
-    "ui-ux-designer": {
+    "ui-ux-mcp": {
       "command": "node",
       "args": [
-        "c:/Users/JoypurHost/Desktop/mcp-collection/servers/ui-ux-designer/server.js"
+        "c:/Users/JoypurHost/Desktop/mcp-collection/servers/ui-ux-mcp/server.js"
       ]
     }
   }
@@ -34,7 +34,7 @@ Open `mcp_config.json` (under Settings > Customizations > Open MCP Config):
 ```
 
 ### 2. Local `.env` File Configuration
-Create a `.env` file in `servers/ui-ux-designer/.env` (or copy from `.env.example`):
+Create a `.env` file in `servers/ui-ux-mcp/.env` (or copy from `.env.example`):
 
 ```env
 # Primary OpenAI-Compatible Provider (e.g. OpenAI / Xiaomi MiMo / OpenRouter)

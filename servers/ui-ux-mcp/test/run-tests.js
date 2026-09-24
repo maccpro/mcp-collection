@@ -10,7 +10,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const serverDir = path.join(__dirname, '..');
 
-console.log('--- Running UI/UX Designer MCP Tests ---');
+console.log('--- Running UI/UX MCP Tests ---');
 
 // Test 1: Pattern Catalog Retrieval
 const pricingPattern = PATTERNS.pricing_table;
@@ -43,4 +43,4 @@ console.log('✅ Test 3 Passed: Cloud Hosting design tokens generated.');
 loadEnv(serverDir);
 console.log('✅ Test 4 Passed: .env loaded (API Key configured:', !!process.env.UI_UX_API_KEY, ').');
 
-console.log('\n🎉 ALL UI/UX DESIGNER MCP TESTS PASSED! 🎉\n');
+console.log('\n🎉 ALL UI/UX MCP TESTS PASSED! 🎉\n');

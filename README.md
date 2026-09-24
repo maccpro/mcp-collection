@@ -10,7 +10,7 @@ A curated monorepo collection of high-performance, production-ready **Model Cont
 | :--- | :--- | :--- | :--- |
 | [`mimo-coder`](./servers/mimo-coder) | Dedicated application code generator powered by Xiaomi MiMo (`mimo-v2.6-pro`) | stdio (JSON-RPC 2.0) | Node.js (Zero external dependencies) |
 | [`laravel-code-pattern`](./servers/laravel-code-pattern) | Deterministic Laravel Clean Architecture & Code Pattern Quality Gate | stdio (JSON-RPC 2.0) | Node.js (Zero external dependencies) |
-| [`ui-ux-designer`](./servers/ui-ux-designer) | Frontend UI/UX Design Suggestion, Tailwind/Shadcn patterns & OpenAI-compatible engine | stdio (JSON-RPC 2.0) | Node.js (Zero external dependencies) |
+| [`ui-ux-mcp`](./servers/ui-ux-mcp) | Frontend UI/UX Design Suggestion, Tailwind/Shadcn patterns & OpenAI-compatible engine | stdio (JSON-RPC 2.0) | Node.js (Zero external dependencies) |
 
 ---
 
@@ -33,7 +33,7 @@ mcp-collection/
     │   ├── package.json
     │   ├── .env.example
     │   └── README.md
-    └── ui-ux-designer/       # Frontend UI/UX Design & Tailwind patterns
+    └── ui-ux-mcp/            # Frontend UI/UX Design & Tailwind patterns
         ├── server.js
         ├── package.json
         ├── .env.example
