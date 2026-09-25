@@ -8,13 +8,28 @@ export class OpenAIClient {
    * Execute chat completion against an OpenAI-compatible endpoint
    */
   static async callProvider(apiUrl, apiKey, model, messages, options = {}) {
-    const payload = {
-      model,
-      messages,
-      max_tokens: options.max_tokens || 4096,
-      temperature: options.temperature ?? 0.7,
-      stream: false
+    const isModernOpenAI = apiUrl.includes('api.openai.com') || (model && (model.startsWith('o1') || model.startsWith('o3') || model.includes('gpt-5')));
+    const tokenLimit = options.max_tokens || 4096;
+
+    const buildPayload = (useMaxCompletionTokens, omitTemperature = false) => {
+      const p = {
+        model,
+        messages,
+        stream: false
+      };
+      if (!omitTemperature && !isModernOpenAI && options.temperature !== undefined) {
+        p.temperature = options.temperature;
+      }
+      if (useMaxCompletionTokens) {
+        p.max_completion_tokens = tokenLimit;
+      } else {
+        p.max_tokens = tokenLimit;
+      }
+      return p;
     };
+
+    let useMaxCompletionTokens = isModernOpenAI;
+    let payload = buildPayload(useMaxCompletionTokens, isModernOpenAI);
 
     const headers = {
       'Content-Type': 'application/json',
@@ -22,7 +37,7 @@ export class OpenAIClient {
       'api-key': apiKey
     };
 
-    const response = await fetch(apiUrl, {
+    let response = await fetch(apiUrl, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload)
@@ -30,7 +45,30 @@ export class OpenAIClient {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`OpenAI-compatible API request failed (${response.status} ${response.statusText}): ${errorText}`);
+      // Resilient Auto-Retry if parameter unsupported
+      if (errorText.includes('max_tokens') && errorText.includes('max_completion_tokens')) {
+        useMaxCompletionTokens = !useMaxCompletionTokens;
+        payload = buildPayload(useMaxCompletionTokens, true);
+        response = await fetch(apiUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload)
+        });
+      } else if (errorText.includes('temperature')) {
+        // Temperature unsupported or only default (1) supported
+        payload = buildPayload(useMaxCompletionTokens, true);
+        delete payload.temperature;
+        response = await fetch(apiUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload)
+        });
+      }
+
+      if (!response.ok) {
+        const retryError = await response.text();
+        throw new Error(`OpenAI-compatible API request failed (${response.status} ${response.statusText}): ${retryError}`);
+      }
     }
 
     const data = await response.json();
