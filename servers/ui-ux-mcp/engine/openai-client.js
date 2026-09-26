@@ -156,7 +156,14 @@ export class OpenAIClient {
       process.env.BACKEND_FALLBACK_MODEL ||
       'deepseek-v4-flash';
 
-    const fallbackContent = await this.callProvider(fallbackUrl, fallbackKey, fallbackModel, messages, options);
+    const fallbackThinking = process.env.UI_UX_FALLBACK_THINKING !== undefined
+      ? process.env.UI_UX_FALLBACK_THINKING !== 'disabled'
+      : (process.env.UI_UX_THINKING !== undefined ? process.env.UI_UX_THINKING !== 'disabled' : options.thinking_enabled);
+
+    const fallbackContent = await this.callProvider(fallbackUrl, fallbackKey, fallbackModel, messages, {
+      ...options,
+      thinking_enabled: fallbackThinking
+    });
     return {
       content: fallbackContent,
       provider: 'fallback',
