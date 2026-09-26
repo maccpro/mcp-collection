@@ -46,18 +46,24 @@ export class AICognitiveReasoner {
     let apiBase = options.apiBase || process.env.CIA_API_BASE;
     let model = options.model || process.env.CIA_MODEL;
 
+    // Detect thinking configuration
+    const thinkingEnv = process.env.CIA_THINKING || process.env.MIMO_THINKING || '';
+    const thinkingEnabled = options.thinking !== undefined
+      ? Boolean(options.thinking)
+      : (thinkingEnv.toLowerCase() === 'enabled' || thinkingEnv === 'true');
+
     // Detect provider
     let provider = options.provider || process.env.CIA_AI_PROVIDER || 'auto';
 
     if (provider === 'auto') {
-      if (process.env.DEEPSEEK_API_KEY) {
+      if (apiBase?.includes('xiaomimimo') || model?.includes('mimo') || process.env.MIMO_API_KEY) {
+        provider = 'mimo';
+        apiBase = apiBase || 'https://token-plan-sgp.xiaomimimo.com/v1';
+        model = model || 'mimo-v2.6-pro';
+      } else if (process.env.DEEPSEEK_API_KEY) {
         provider = 'deepseek';
         apiBase = apiBase || 'https://api.deepseek.com/v1';
         model = model || 'deepseek-chat';
-      } else if (process.env.MIMO_API_KEY) {
-        provider = 'mimo';
-        apiBase = apiBase || 'https://api.mimo.org/v1';
-        model = model || 'mimo-v1';
       } else if (process.env.GROQ_API_KEY) {
         provider = 'groq';
         apiBase = apiBase || 'https://api.groq.com/openai/v1';
@@ -75,8 +81,9 @@ export class AICognitiveReasoner {
       apiBase: apiBase?.replace(/\/+$/, '') || 'https://api.openai.com/v1',
       model,
       provider,
+      thinking: thinkingEnabled ? 'enabled' : 'disabled',
       temperature: options.temperature ?? 0.2,
-      max_tokens: options.max_tokens ?? 1200
+      max_tokens: options.max_tokens ?? (thinkingEnabled ? 4096 : 1200)
     };
   }
 
@@ -141,6 +148,27 @@ export class AICognitiveReasoner {
   static async _callLLMReasoner(context, config) {
     const prompt = this._buildPrompt(context);
 
+    const payload = {
+      model: config.model,
+      temperature: config.temperature,
+      max_tokens: config.max_tokens,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: 'You are an elite Principal Software Architect and Static Impact Intelligence Engine. Analyze AST diffs, symbol graphs, runtime hazards, and database blast radiuses. Output strictly valid JSON matching the specified schema.'
+        },
+        {
+          role: 'user',
+          content: prompt
+        }
+      ]
+    };
+
+    if (config.thinking === 'enabled') {
+      payload.thinking = { type: 'enabled' };
+    }
+
     const endpoint = `${config.apiBase}/chat/completions`;
     const response = await fetch(endpoint, {
       method: 'POST',
@@ -148,22 +176,7 @@ export class AICognitiveReasoner {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${config.apiKey}`
       },
-      body: JSON.stringify({
-        model: config.model,
-        temperature: config.temperature,
-        max_tokens: config.max_tokens,
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'system',
-            content: 'You are an elite Principal Software Architect and Static Impact Intelligence Engine. Analyze AST diffs, symbol graphs, runtime hazards, and database blast radiuses. Output strictly valid JSON matching the specified schema.'
-          },
-          {
-            role: 'user',
-            content: prompt
-          }
-        ]
-      })
+      body: JSON.stringify(payload)
     });
 
     if (!response.ok) {
@@ -172,15 +185,32 @@ export class AICognitiveReasoner {
     }
 
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
+    const message = data.choices?.[0]?.message || {};
+    let content = message.content || '';
+    const reasoningTrace = message.reasoning_content || null;
+
+    // Resiliently strip markdown code blocks if returned
+    if (content.includes('```json')) {
+      content = content.replace(/```json\s*/g, '').replace(/```\s*$/g, '').trim();
+    } else if (content.includes('```')) {
+      content = content.replace(/```\s*/g, '').trim();
+    }
+
     const parsed = JSON.parse(content);
 
-    return {
+    const result = {
       mode: 'ai_cognitive_synthesis',
       provider: config.provider,
       model: config.model,
+      thinking_enabled: config.thinking === 'enabled',
       ...parsed
     };
+
+    if (reasoningTrace) {
+      result.ai_reasoning_trace = reasoningTrace;
+    }
+
+    return result;
   }
 
   /**
