@@ -9,6 +9,7 @@ A curated monorepo collection of high-performance, production-ready **Model Cont
 | Server | Description | Protocol | Runtime |
 | :--- | :--- | :--- | :--- |
 | [`backend-mcp`](./servers/backend-mcp) | Enterprise backend application code, business logic, APIs & algorithm generator | stdio (JSON-RPC 2.0) | Node.js (Zero external dependencies) |
+| [`database-mcp`](./servers/database-mcp) | Enterprise Reversible Migrations, SARGable Query Optimizer & Hardware Tuner for MariaDB, MySQL & PostgreSQL | stdio (JSON-RPC 2.0) | Node.js (Zero external dependencies) |
 | [`laravel-code-pattern`](./servers/laravel-code-pattern) | Deterministic Laravel Clean Architecture & Code Pattern Quality Gate | stdio (JSON-RPC 2.0) | Node.js (Zero external dependencies) |
 | [`ui-ux-mcp`](./servers/ui-ux-mcp) | Frontend UI/UX Design Suggestion, Tailwind/Shadcn patterns & OpenAI-compatible engine | stdio (JSON-RPC 2.0) | Node.js (Zero external dependencies) |
 
@@ -27,6 +28,13 @@ mcp-collection/
     │   ├── package.json
     │   ├── .env.example
     │   └── README.md
+    ├── database-mcp/         # MariaDB, MySQL & PostgreSQL Architecture & Migration Engine
+    │   ├── server.js
+    │   ├── package.json
+    │   ├── .env.example
+    │   ├── README.md
+    │   ├── engine/
+    │   └── test/
     ├── laravel-code-pattern/ # Laravel Clean Architecture quality gate
     │   ├── server.js
     │   ├── package.json

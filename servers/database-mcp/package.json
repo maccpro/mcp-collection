@@ -1,0 +1,29 @@
+{
+  "name": "@maccpro/database-mcp",
+  "version": "1.0.0",
+  "description": "Enterprise Database Architecture, Reversible Migrations, SARGable Query Optimizer & Hardware Tuner for MariaDB, MySQL & PostgreSQL",
+  "main": "server.js",
+  "type": "module",
+  "bin": {
+    "database-mcp": "./server.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/run-tests.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "database",
+    "mariadb",
+    "mysql",
+    "postgresql",
+    "laravel",
+    "migrations",
+    "zero-downtime",
+    "performance-tuning",
+    "antigravity"
+  ],
+  "author": "MaccPro Team",
+  "license": "MIT"
+}
