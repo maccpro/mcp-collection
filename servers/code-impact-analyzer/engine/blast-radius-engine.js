@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DynamicSymbolResolver } from './dynamic-symbol-resolver.js';
+import { ASTClassClassifier } from './ast-class-classifier.js';
 
 export class BlastRadiusEngine {
   /**
@@ -104,7 +105,8 @@ export class BlastRadiusEngine {
       level2Count: l2Array.length,
       level3Count: l3Array.length,
       l1Files: l1Array,
-      origins: blastRadiusGraph.level_0_origins
+      origins: blastRadiusGraph.level_0_origins,
+      indexedFiles
     });
 
     // Generate Mermaid Diagram
@@ -172,9 +174,9 @@ export class BlastRadiusEngine {
   }
 
   /**
-   * Calculate Weighted Risk Score
+   * Calculate Weighted Risk Score dynamically based on AST classification
    */
-  static _calculateRiskScore({ level1Count, level2Count, level3Count, l1Files, origins }) {
+  static _calculateRiskScore({ level1Count, level2Count, level3Count, l1Files, origins, indexedFiles = [] }) {
     let score = 0;
     const factors = [];
 
@@ -195,22 +197,55 @@ export class BlastRadiusEngine {
       factors.push(`Transitive Dependents Level 3 (${level3Count} files): +${l3Points}`);
     }
 
-    // Check for high-risk layers in affected files
+    // Dynamic AST classification of affected files
     const allAffected = [...origins, ...l1Files];
+    let hasMigration = false;
+    let hasControllerOrRoute = false;
+    let hasAuthOrSecurity = false;
+    let hasAsyncQueue = false;
+    let hasTenantAware = false;
 
-    if (allAffected.some(f => f.includes('/migrations/'))) {
+    for (const f of allAffected) {
+      const indexed = indexedFiles.find(item => item.path === f);
+      const content = indexed ? indexed.content : '';
+      const ast = ASTClassClassifier.classify(content, f);
+
+      if (ast.category === 'migration' || ast.is_database_entity || f.includes('migration')) {
+        hasMigration = true;
+      }
+      if (ast.category === 'controller' || ast.category === 'action' || f.includes('routes/')) {
+        hasControllerOrRoute = true;
+      }
+      if (ast.category === 'middleware' || ast.traits.includes('AuthorizesRequests') || f.includes('Policy') || f.includes('Auth')) {
+        hasAuthOrSecurity = true;
+      }
+      if (ast.is_async_queue) {
+        hasAsyncQueue = true;
+      }
+      if (ast.is_tenant_aware) {
+        hasTenantAware = true;
+      }
+    }
+
+    if (hasMigration) {
       score += 6.0;
       factors.push('Database Schema Mutation: +6.0 (High Lock/Data Risk)');
     }
-
-    if (allAffected.some(f => f.includes('/routes/') || f.includes('/Controllers/'))) {
+    if (hasControllerOrRoute) {
       score += 4.0;
       factors.push('Public HTTP Route / Controller affected: +4.0 (API Contract Risk)');
     }
-
-    if (allAffected.some(f => f.includes('Middleware') || f.includes('Auth') || f.includes('Policy'))) {
+    if (hasAuthOrSecurity) {
       score += 8.0;
       factors.push('Authentication / Security Policy affected: +8.0 (Security Risk)');
+    }
+    if (hasAsyncQueue) {
+      score += 5.0;
+      factors.push('Asynchronous Queue Worker affected: +5.0 (In-flight Payload Risk)');
+    }
+    if (hasTenantAware) {
+      score += 7.0;
+      factors.push('Multi-Tenant Data Entity affected: +7.0 (Tenant Boundary Risk)');
     }
 
     let severity = 'LOW';

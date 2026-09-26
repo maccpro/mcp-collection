@@ -6,6 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { DynamicProjectIntrospector } from './dynamic-project-introspector.js';
 
 export class TestImpactSelector {
   /**
@@ -23,7 +24,8 @@ export class TestImpactSelector {
       framework = 'pest'
     } = params;
 
-    const testsDir = path.join(repo_path, 'tests');
+    const projectInfo = DynamicProjectIntrospector.introspect(repo_path);
+    const testDirs = projectInfo.test_directories || [];
     const targetedTests = new Set();
     const mappingDetails = [];
 
@@ -38,8 +40,19 @@ export class TestImpactSelector {
       };
     });
 
-    if (fs.existsSync(testsDir)) {
-      this._scanTests(testsDir, targets, targetedTests, mappingDetails, repo_path);
+    // Scan all dynamically detected test directories
+    if (testDirs.length > 0) {
+      for (const tDir of testDirs) {
+        const fullTestDir = path.isAbsolute(tDir) ? tDir : path.join(repo_path, tDir);
+        if (fs.existsSync(fullTestDir)) {
+          this._scanTests(fullTestDir, targets, targetedTests, mappingDetails, repo_path);
+        }
+      }
+    } else {
+      const defaultTestsDir = path.join(repo_path, 'tests');
+      if (fs.existsSync(defaultTestsDir)) {
+        this._scanTests(defaultTestsDir, targets, targetedTests, mappingDetails, repo_path);
+      }
     }
 
     const testList = Array.from(targetedTests);

@@ -5,7 +5,8 @@
  * @description Enterprise Dynamic Code Impact Analyzer (CIA) MCP Server
  * for Laravel, PHP, and Full-Stack Systems.
  * 
- * 100% Offline, Deterministic, Zero-Token & Free.
+ * Zero-hardcode, Neuro-Symbolic, Free & Resilient with AI Cognitive Reasoning
+ * and Graceful 100% Offline Fallback.
  */
 
 import readline from 'node:readline';
@@ -19,6 +20,10 @@ import { BlastRadiusEngine } from './engine/blast-radius-engine.js';
 import { DatabaseImpactEngine } from './engine/database-impact-engine.js';
 import { BreakingChangeDetector } from './engine/breaking-change-detector.js';
 import { TestImpactSelector } from './engine/test-impact-selector.js';
+import { DynamicProjectIntrospector } from './engine/dynamic-project-introspector.js';
+import { ASTClassClassifier } from './engine/ast-class-classifier.js';
+import { DynamicHazardEvaluator } from './engine/dynamic-hazard-evaluator.js';
+import { AICognitiveReasoner } from './engine/ai-cognitive-reasoner.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -51,6 +56,65 @@ const TOOLS = [
           type: 'integer',
           default: 3,
           description: 'Maximum transitive call graph search depth (1, 2, or 3).'
+        }
+      }
+    }
+  },
+  {
+    name: 'cia_deep_impact_analysis',
+    description: 'All-in-one Neuro-Symbolic Code Impact Analysis. Combines dynamic PSR-4 project introspection, AST class classification, transitive blast radius computation, in-flight queue hazard evaluation, multi-tenant isolation breach checks, breaking change detection, targeted test suite mapping, and AI cognitive executive synthesis.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo_path: {
+          type: 'string',
+          description: 'Root directory of the repository (defaults to current working directory).'
+        },
+        staged_only: {
+          type: 'boolean',
+          default: false,
+          description: 'Analyze only git staged changes.'
+        },
+        raw_diff: {
+          type: 'string',
+          description: 'Optional raw diff string to analyze directly.'
+        },
+        max_depth: {
+          type: 'integer',
+          default: 3,
+          description: 'Maximum transitive traversal depth.'
+        },
+        enable_ai_reasoning: {
+          type: 'boolean',
+          default: true,
+          description: 'Whether to synthesize findings with AI cognitive reasoner (falls back gracefully to deterministic offline mode if no API key is set).'
+        }
+      }
+    }
+  },
+  {
+    name: 'cia_executive_verdict',
+    description: 'Generates an executive architectural verdict (APPROVE, REQUIRES_PEER_REVIEW, REJECT_BREAKING_CHANGES) with canary deployment readiness, risk gate evaluation, and mitigation action items.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo_path: {
+          type: 'string',
+          description: 'Root directory of the repository.'
+        },
+        staged_only: {
+          type: 'boolean',
+          default: false,
+          description: 'Check staged changes.'
+        },
+        raw_diff: {
+          type: 'string',
+          description: 'Optional raw diff string.'
+        },
+        max_risk_score: {
+          type: 'number',
+          default: 30.0,
+          description: 'Risk score threshold.'
         }
       }
     }
@@ -211,6 +275,29 @@ async function handleToolCall(name, args) {
         repo_path: repoPath
       });
 
+      // Breaking changes
+      const breakingChanges = [];
+      for (const f of diffResult.files) {
+        const bc = BreakingChangeDetector.detect({
+          old_code: f.old_content || '',
+          new_code: f.new_content || '',
+          file_path: f.path
+        });
+        if (bc.breaking_changes && bc.breaking_changes.length > 0) {
+          breakingChanges.push(...bc.breaking_changes);
+        }
+      }
+
+      // Hazards
+      const hazardReport = DynamicHazardEvaluator.evaluateHazards(
+        diffResult.files.map(f => ({
+          filePath: f.path,
+          oldContent: f.old_content || '',
+          newContent: f.new_content || '',
+          diff: f.diff || ''
+        }))
+      );
+
       const response = {
         git_summary: diffResult.summary,
         total_files_changed: diffResult.total_files_changed,
@@ -220,6 +307,8 @@ async function handleToolCall(name, args) {
           severity: blastResult.severity,
           risk_factors: blastResult.risk_factors
         },
+        breaking_changes: breakingChanges,
+        runtime_hazards: hazardReport,
         blast_radius_breakdown: blastResult.blast_radius,
         mermaid_blast_radius_graph: blastResult.mermaid_graph,
         targeted_tests: testResult
@@ -230,6 +319,199 @@ async function handleToolCall(name, args) {
           {
             type: 'text',
             text: JSON.stringify(response, null, 2)
+          }
+        ]
+      };
+    }
+
+    case 'cia_deep_impact_analysis': {
+      const projectArchitecture = DynamicProjectIntrospector.introspect(repoPath);
+
+      const diffResult = GitDiffAnalyzer.analyze({
+        repo_path: repoPath,
+        staged_only: args.staged_only,
+        raw_diff: args.raw_diff
+      });
+
+      if (!diffResult.has_changes) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                message: 'No changes detected in Git repository.',
+                project_architecture: projectArchitecture,
+                risk_score: 0,
+                verdict: 'APPROVE',
+                gate_status: 'PASS'
+              }, null, 2)
+            }
+          ]
+        };
+      }
+
+      const targets = diffResult.files.map(f => ({
+        path: f.path,
+        symbols: f.changed_symbols
+      }));
+
+      const blastResult = BlastRadiusEngine.compute({
+        targets,
+        repo_path: repoPath,
+        max_depth: args.max_depth || 3
+      });
+
+      const allAffectedFiles = [
+        ...blastResult.blast_radius.origins,
+        ...blastResult.blast_radius.direct_dependents
+      ];
+
+      const testResult = TestImpactSelector.select({
+        changed_files: allAffectedFiles,
+        repo_path: repoPath
+      });
+
+      // Breaking changes
+      const breakingChanges = [];
+      for (const f of diffResult.files) {
+        const bc = BreakingChangeDetector.detect({
+          old_code: f.old_content || '',
+          new_code: f.new_content || '',
+          file_path: f.path
+        });
+        if (bc.breaking_changes && bc.breaking_changes.length > 0) {
+          breakingChanges.push(...bc.breaking_changes);
+        }
+      }
+
+      // Hazards
+      const hazardReport = DynamicHazardEvaluator.evaluateHazards(
+        diffResult.files.map(f => ({
+          filePath: f.path,
+          oldContent: f.old_content || '',
+          newContent: f.new_content || '',
+          diff: f.diff || ''
+        }))
+      );
+
+      // AI Cognitive Synthesis
+      const cognitiveVerdict = await AICognitiveReasoner.reason({
+        diffSummary: {
+          files_changed: diffResult.total_files_changed,
+          summary: diffResult.summary
+        },
+        blastRadius: {
+          risk_score: blastResult.risk_score,
+          severity: blastResult.severity,
+          direct_callers_count: blastResult.blast_radius.direct_dependents.length,
+          total_affected_files: blastResult.total_affected_files
+        },
+        breakingChanges,
+        hazards: hazardReport.hazards,
+        targetedTests: testResult.targeted_test_files
+      }, {
+        enabled: args.enable_ai_reasoning !== false
+      });
+
+      const fullReport = {
+        project_architecture: projectArchitecture,
+        executive_verdict: cognitiveVerdict,
+        blast_radius: {
+          total_affected_files: blastResult.total_affected_files,
+          risk_score: blastResult.risk_score,
+          severity: blastResult.severity,
+          risk_factors: blastResult.risk_factors,
+          breakdown: blastResult.blast_radius,
+          mermaid_graph: blastResult.mermaid_graph
+        },
+        breaking_changes: breakingChanges,
+        runtime_hazards: hazardReport,
+        targeted_tests: testResult
+      };
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(fullReport, null, 2)
+          }
+        ]
+      };
+    }
+
+    case 'cia_executive_verdict': {
+      const diffResult = GitDiffAnalyzer.analyze({
+        repo_path: repoPath,
+        staged_only: args.staged_only,
+        raw_diff: args.raw_diff
+      });
+
+      if (!diffResult.has_changes) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                verdict: 'APPROVE',
+                gate_status: 'PASS',
+                risk_score: 0,
+                summary: 'No changes detected. Codebase is clean and ready.'
+              }, null, 2)
+            }
+          ]
+        };
+      }
+
+      const targets = diffResult.files.map(f => ({
+        path: f.path,
+        symbols: f.changed_symbols
+      }));
+
+      const blastResult = BlastRadiusEngine.compute({
+        targets,
+        repo_path: repoPath
+      });
+
+      const breakingChanges = [];
+      for (const f of diffResult.files) {
+        const bc = BreakingChangeDetector.detect({
+          old_code: f.old_content || '',
+          new_code: f.new_content || '',
+          file_path: f.path
+        });
+        if (bc.breaking_changes && bc.breaking_changes.length > 0) {
+          breakingChanges.push(...bc.breaking_changes);
+        }
+      }
+
+      const hazardReport = DynamicHazardEvaluator.evaluateHazards(
+        diffResult.files.map(f => ({
+          filePath: f.path,
+          oldContent: f.old_content || '',
+          newContent: f.new_content || '',
+          diff: f.diff || ''
+        }))
+      );
+
+      const cognitiveVerdict = await AICognitiveReasoner.reason({
+        diffSummary: {
+          files_changed: diffResult.total_files_changed,
+          summary: diffResult.summary
+        },
+        blastRadius: {
+          risk_score: blastResult.risk_score,
+          severity: blastResult.severity,
+          direct_callers_count: blastResult.blast_radius.direct_dependents.length
+        },
+        breakingChanges,
+        hazards: hazardReport.hazards
+      });
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(cognitiveVerdict, null, 2)
           }
         ]
       };
@@ -328,11 +610,44 @@ async function handleToolCall(name, args) {
         repo_path: repoPath
       });
 
+      // Check breaking changes
+      const breakingChanges = [];
+      for (const f of diffResult.files) {
+        const bc = BreakingChangeDetector.detect({
+          old_code: f.old_content || '',
+          new_code: f.new_content || '',
+          file_path: f.path
+        });
+        if (bc.breaking_changes && bc.breaking_changes.length > 0) {
+          breakingChanges.push(...bc.breaking_changes);
+        }
+      }
+
+      // Check hazards
+      const hazardReport = DynamicHazardEvaluator.evaluateHazards(
+        diffResult.files.map(f => ({
+          filePath: f.path,
+          oldContent: f.old_content || '',
+          newContent: f.new_content || '',
+          diff: f.diff || ''
+        }))
+      );
+
       const maxRisk = args.max_risk_score !== undefined ? args.max_risk_score : 30.0;
       const exceedsRisk = blastResult.risk_score > maxRisk;
+      const hasBreaking = breakingChanges.length > 0;
+      const hasCriticalHazards = hazardReport.critical_hazards > 0;
       const isCritical = blastResult.severity === 'CRITICAL';
 
-      const status = (exceedsRisk || (args.fail_on_breaking !== false && isCritical)) ? 'FAIL' : 'PASS';
+      const shouldFail = exceedsRisk ||
+                         (args.fail_on_breaking !== false && (hasBreaking || hasCriticalHazards || isCritical));
+
+      const status = shouldFail ? 'FAIL' : 'PASS';
+
+      const blockingReasons = [];
+      if (exceedsRisk) blockingReasons.push(`Risk score (${blastResult.risk_score}) exceeds allowed threshold (${maxRisk}).`);
+      if (hasBreaking) blockingReasons.push(`Detected ${breakingChanges.length} breaking signature change(s).`);
+      if (hasCriticalHazards) blockingReasons.push(`Detected ${hazardReport.critical_hazards} critical runtime hazard(s).`);
 
       const response = {
         status,
@@ -340,9 +655,11 @@ async function handleToolCall(name, args) {
         max_allowed_risk: maxRisk,
         severity: blastResult.severity,
         total_affected_files: blastResult.total_affected_files,
-        blocking_reasons: exceedsRisk ? [`Risk score (${blastResult.risk_score}) exceeds allowed threshold (${maxRisk}).`] : [],
+        breaking_changes_count: breakingChanges.length,
+        critical_hazards_count: hazardReport.critical_hazards,
+        blocking_reasons: blockingReasons,
         recommendations: status === 'FAIL'
-          ? ['Review transitive blast radius files.', 'Run targeted test suite before committing.', 'Ensure backward compatibility on modified public methods.']
+          ? ['Review transitive blast radius files.', 'Address breaking changes or runtime hazards.', 'Run targeted test suite before committing.']
           : ['Safe to commit.']
       };
 
@@ -401,7 +718,7 @@ rl.on('line', async (line) => {
             },
             serverInfo: {
               name: 'code-impact-analyzer',
-              version: '1.0.0'
+              version: '2.0.0'
             }
           }
         });

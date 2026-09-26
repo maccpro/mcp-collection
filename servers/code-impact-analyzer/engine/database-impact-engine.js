@@ -6,6 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { ASTClassClassifier } from './ast-class-classifier.js';
 
 export class DatabaseImpactEngine {
   /**
@@ -121,16 +122,20 @@ export class DatabaseImpactEngine {
                 matched_expression: matchedToken
               };
 
-              if (relPath.includes('/Models/')) {
+              const ast = ASTClassClassifier.classify(content, relPath);
+
+              if (ast.category === 'model' || relPath.includes('/Models/')) {
                 affected.models.push(fileObj);
-              } else if (relPath.includes('/Requests/')) {
+              } else if (ast.category === 'form_request' || relPath.includes('/Requests/')) {
                 affected.form_requests.push(fileObj);
-              } else if (relPath.includes('/Services/') || relPath.includes('/Repositories/') || relPath.includes('/Actions/')) {
+              } else if (ast.category === 'service' || ast.category === 'repository' || ast.category === 'action' || relPath.includes('/Services/') || relPath.includes('/Repositories/') || relPath.includes('/Actions/')) {
                 affected.repositories_and_services.push(fileObj);
-              } else if (relPath.includes('/factories/') || relPath.includes('/seeders/')) {
+              } else if (relPath.includes('/factories/') || relPath.includes('/seeders/') || content.includes('extends Factory') || content.includes('extends Seeder')) {
                 affected.factories_and_seeders.push(fileObj);
-              } else if (relPath.includes('/views/') || relPath.includes('/resources/')) {
+              } else if (relPath.endsWith('.blade.php') || relPath.endsWith('.vue') || relPath.includes('/views/') || relPath.includes('/resources/')) {
                 affected.views.push(fileObj);
+              } else {
+                affected.repositories_and_services.push(fileObj);
               }
             }
           } catch (e) {
