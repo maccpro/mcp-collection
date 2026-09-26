@@ -8,7 +8,7 @@ A curated monorepo collection of high-performance, production-ready **Model Cont
 
 | Server | Description | Protocol | Runtime |
 | :--- | :--- | :--- | :--- |
-| [`mimo-coder`](./servers/mimo-coder) | Dedicated application code generator powered by Xiaomi MiMo (`mimo-v2.6-pro`) | stdio (JSON-RPC 2.0) | Node.js (Zero external dependencies) |
+| [`backend-mcp`](./servers/backend-mcp) | Enterprise backend application code, business logic, APIs & algorithm generator | stdio (JSON-RPC 2.0) | Node.js (Zero external dependencies) |
 | [`laravel-code-pattern`](./servers/laravel-code-pattern) | Deterministic Laravel Clean Architecture & Code Pattern Quality Gate | stdio (JSON-RPC 2.0) | Node.js (Zero external dependencies) |
 | [`ui-ux-mcp`](./servers/ui-ux-mcp) | Frontend UI/UX Design Suggestion, Tailwind/Shadcn patterns & OpenAI-compatible engine | stdio (JSON-RPC 2.0) | Node.js (Zero external dependencies) |
 
@@ -22,17 +22,17 @@ mcp-collection/
 ├── LICENSE
 ├── README.md
 └── servers/
+    ├── backend-mcp/          # Enterprise Backend & Logic generator
+    │   ├── server.js
+    │   ├── package.json
+    │   ├── .env.example
+    │   └── README.md
     ├── laravel-code-pattern/ # Laravel Clean Architecture quality gate
     │   ├── server.js
     │   ├── package.json
     │   ├── README.md
     │   ├── config/
     │   └── engine/
-    ├── mimo-coder/           # Xiaomi MiMo code generator
-    │   ├── mimo-server.js
-    │   ├── package.json
-    │   ├── .env.example
-    │   └── README.md
     └── ui-ux-mcp/            # Frontend UI/UX Design & Tailwind patterns
         ├── server.js
         ├── package.json

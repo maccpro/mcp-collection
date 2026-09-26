@@ -1,0 +1,26 @@
+{
+  "name": "@maccpro/backend-mcp",
+  "version": "1.0.0",
+  "description": "Enterprise Backend Application Code & Business Logic Generator MCP Server for AI Coding Assistants",
+  "main": "server.js",
+  "type": "module",
+  "bin": {
+    "backend-mcp": "./server.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/run-tests.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "backend",
+    "business-logic",
+    "antigravity",
+    "claude",
+    "cursor",
+    "ai-coding"
+  ],
+  "author": "MaccPro Team",
+  "license": "MIT"
+}
