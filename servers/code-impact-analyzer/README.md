@@ -66,3 +66,40 @@ npm test
   }
 }
 ```
+
+---
+
+## 🤖 Global Agent Rules (`AGENTS.md`)
+
+When setting up this MCP server in a new environment, add the following hard rule to your AI assistant's system instructions (e.g. `~/.gemini/config/AGENTS.md`, `.cursorrules`, or `CLAUDE.md`):
+
+```markdown
+- **Auto Dynamic Code Impact & Blast Radius Gate (code-impact-analyzer)**: Always utilize `code-impact-analyzer` tools (`cia_analyze_git_diff`, `cia_trace_symbol`, `cia_db_blast_radius`, `cia_targeted_test_suite`, `cia_quality_gate`) before commits or PRs to calculate blast radius, detect contract-breaking changes, evaluate database mutation risks, and execute targeted test suites.
+```
+
+---
+
+## 🛡️ Antigravity Auto-Permission Grants (`config.json`)
+
+To prevent Antigravity or the AI assistant from prompting for confirmation on every single analysis, add the following lines to `globalPermissionGrants.allow` in `~/.gemini/config/config.json`:
+
+```json
+"mcp(code-impact-analyzer/cia_analyze_git_diff)",
+"mcp(code-impact-analyzer/cia_trace_symbol)",
+"mcp(code-impact-analyzer/cia_db_blast_radius)",
+"mcp(code-impact-analyzer/cia_targeted_test_suite)",
+"mcp(code-impact-analyzer/cia_quality_gate)"
+```
+
+---
+
+## 📋 Recommended Agent Workflow
+
+1. **Pre-Commit Blast Radius Inspection**:
+   - The agent runs `cia_analyze_git_diff(staged_only: true)` to evaluate the transitive dependencies of all modified files.
+2. **Quality Gate Verification**:
+   - The agent runs `cia_quality_gate()`. If `FAIL`, the commit is blocked until breaking changes (e.g. added required arguments without defaults) are resolved.
+3. **Database Schema Changes**:
+   - Before applying any Laravel migration altering or dropping a column, the agent runs `cia_db_blast_radius(table: "users", column: "email", operation: "modify_column")` to ensure no active Form Requests, Repositories, or Views break.
+4. **Targeted Testing**:
+   - The agent runs `cia_targeted_test_suite(changed_files: [...])` and executes only the relevant Pest/PHPUnit tests, avoiding expensive full test runs.
