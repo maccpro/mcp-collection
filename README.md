@@ -11,7 +11,7 @@ A curated monorepo collection of high-performance, production-ready **Model Cont
 | [`backend-mcp`](./servers/backend-mcp) | Enterprise backend application code, business logic, APIs & algorithm generator | stdio (JSON-RPC 2.0) | Node.js (Zero external dependencies) |
 | [`database-mcp`](./servers/database-mcp) | Enterprise Reversible Migrations, SARGable Query Optimizer & Hardware Tuner for MariaDB, MySQL & PostgreSQL | stdio (JSON-RPC 2.0) | Node.js (Zero external dependencies) |
 | [`laravel-code-pattern`](./servers/laravel-code-pattern) | Deterministic Laravel Clean Architecture & Code Pattern Quality Gate | stdio (JSON-RPC 2.0) | Node.js (Zero external dependencies) |
-| [`ui-ux-mcp`](./servers/ui-ux-mcp) | Frontend UI/UX Design Suggestion, Tailwind/Shadcn patterns & OpenAI-compatible engine | stdio (JSON-RPC 2.0) | Node.js (Zero external dependencies) |
+| [`ui-ux-mcp`](./servers/ui-ux-mcp) | Enterprise Frontend UI/UX Design System, WCAG 2.2 Heuristic Audit, Dynamic Tokens, Color Math & Multi-Framework Converter | stdio (JSON-RPC 2.0) | Node.js (Zero external dependencies) |
 
 ---
 

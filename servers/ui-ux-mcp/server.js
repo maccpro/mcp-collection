@@ -4,21 +4,24 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
 import { loadEnv } from './engine/env-loader.js';
-import { PATTERNS } from './engine/patterns-catalog.js';
+import { PATTERNS, getPattern } from './engine/patterns-catalog.js';
 import { AuditHeuristics } from './engine/audit-heuristics.js';
 import { DesignTokens } from './engine/design-tokens.js';
 import { OpenAIClient } from './engine/openai-client.js';
+import { ProjectDetector } from './engine/project-detector.js';
+import { ComponentConverter } from './engine/component-converter.js';
+import { ColorEngine } from './engine/color-engine.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Automatically load local .env if present
+// Automatically load local and cascading .env
 loadEnv(__dirname);
 
 const TOOLS = [
   {
     name: 'ui_ux_suggest_pattern',
-    description: 'Instant curated UI/UX pattern generator for SaaS, Cloud Hosting, E-commerce, and Admin Dashboards. Returns production-ready Tailwind CSS & Shadcn UI markup, design guidelines, and conversion best practices without needing an API key.',
+    description: 'Instant curated UI/UX pattern generator for SaaS, Cloud Hosting, E-commerce, and Admin Dashboards. Returns production-ready, accessible Tailwind CSS, Shadcn UI, Blade/Livewire, or Vue markup with dynamic brand name, currency symbol, and color theming without needing an external API key.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -29,13 +32,35 @@ const TOOLS = [
             'dashboard_metrics',
             'checkout_flow',
             'hero_section',
-            'data_table'
+            'data_table',
+            'server_resource_monitor',
+            'vps_configurator',
+            'command_palette',
+            'sidebar_navigation',
+            'modal_dialog'
           ],
           description: 'The type of UI component pattern to retrieve.'
         },
+        framework: {
+          type: 'string',
+          enum: ['html_tailwind', 'blade_livewire', 'react_shadcn', 'vue_tailwind', 'svelte_tailwind'],
+          description: 'Target frontend template syntax (default: html_tailwind).'
+        },
+        brand_name: {
+          type: 'string',
+          description: 'Custom brand or project name to interpolate into copy (e.g. "JoypurHost", "MaccPro"). Default: "JoypurHost Cloud".'
+        },
+        currency_symbol: {
+          type: 'string',
+          description: 'Currency symbol to display (e.g. "৳", "$", "€", "₹"). Default: "$".'
+        },
+        color_scheme: {
+          type: 'string',
+          description: 'Primary Tailwind color family or custom hex (default: indigo).'
+        },
         include_code: {
           type: 'boolean',
-          description: 'Whether to include the complete HTML/Tailwind CSS markup (default: true).'
+          description: 'Whether to include the complete markup (default: true).'
         }
       },
       required: ['component_type']
@@ -43,7 +68,7 @@ const TOOLS = [
   },
   {
     name: 'ui_ux_generate_custom_design',
-    description: 'Generates tailored, high-converting Tailwind CSS / Shadcn UI components based on custom requirements using an OpenAI-compatible API (OpenAI, Xiaomi MiMo, DeepSeek, OpenRouter, Groq).',
+    description: 'Generates tailored, high-converting Tailwind CSS / Shadcn UI components based on custom requirements using an OpenAI-compatible API. Automatically adapts to project framework, Tailwind version (v3 vs v4), and component architecture.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -51,15 +76,28 @@ const TOOLS = [
           type: 'string',
           description: 'Detailed description of the UI component, target audience, layout, and functionality needed.'
         },
+        project_path: {
+          type: 'string',
+          description: 'Optional path to project root to automatically detect framework, Tailwind version, and icon sets.'
+        },
         target_framework: {
           type: 'string',
-          enum: ['html_tailwind', 'blade_livewire', 'vue_tailwind', 'react_tailwind'],
-          description: 'Target frontend template syntax (default: html_tailwind).'
+          enum: ['html_tailwind', 'blade_livewire', 'react_shadcn', 'vue_tailwind', 'svelte_tailwind'],
+          description: 'Target frontend template syntax (default: auto-detected or html_tailwind).'
+        },
+        tailwind_version: {
+          type: 'string',
+          enum: ['auto', 'v4', 'v3'],
+          description: 'Target Tailwind CSS version (default: auto).'
         },
         theme_mode: {
           type: 'string',
           enum: ['both', 'dark', 'light'],
           description: 'Color theme mode support (default: both).'
+        },
+        thinking_enabled: {
+          type: 'boolean',
+          description: 'Enable deep reasoning/thinking for complex layouts (default: true).'
         }
       },
       required: ['prompt']
@@ -67,13 +105,13 @@ const TOOLS = [
   },
   {
     name: 'ui_ux_audit_checklist',
-    description: 'Audits frontend HTML/Tailwind/Blade code snippets for UX heuristics, touch target sizing (>=44px), mobile responsiveness, and WCAG 2.1 accessibility (a11y).',
+    description: 'Deep audit of HTML, Blade, JSX, or Vue code snippets for WCAG 2.1/2.2 AA & AAA accessibility, touch target sizing (>=44px), mobile responsiveness, and Tailwind clean code. Returns a numerical score, categorized findings, and an automated refactored fix.',
     inputSchema: {
       type: 'object',
       properties: {
         code_snippet: {
           type: 'string',
-          description: 'The HTML/Tailwind/Blade code snippet to evaluate.'
+          description: 'The HTML/Tailwind/Blade/JSX code snippet to evaluate.'
         },
         context: {
           type: 'string',
@@ -85,14 +123,23 @@ const TOOLS = [
   },
   {
     name: 'ui_ux_design_tokens',
-    description: 'Generates cohesive Tailwind CSS design tokens, color palettes (cloud hosting, saas, ecommerce), typography scales, and tailwind.config.js snippets.',
+    description: 'Generates cohesive design tokens, 10-shade tonal palettes (50-950) from ANY custom brand hex or preset, Tailwind CSS v3 config, Tailwind CSS v4 @theme CSS blocks, and Shadcn UI CSS variables.',
     inputSchema: {
       type: 'object',
       properties: {
         theme_preset: {
           type: 'string',
-          enum: ['cloud_hosting', 'saas_modern', 'ecommerce_vibrant'],
+          enum: ['cloud_hosting', 'saas_modern', 'ecommerce_vibrant', 'enterprise_slate', 'cyber_neon', 'fintech_trust'],
           description: 'Industry design theme preset (default: cloud_hosting).'
+        },
+        custom_hex: {
+          type: 'string',
+          description: 'Optional custom brand hex code (e.g. "#0EA5E9", "#10B981") to generate dynamic 10-shade tonal palette.'
+        },
+        tailwind_version: {
+          type: 'string',
+          enum: ['both', 'v4', 'v3'],
+          description: 'Target Tailwind configuration syntax (default: both).'
         },
         mode: {
           type: 'string',
@@ -101,27 +148,84 @@ const TOOLS = [
         }
       }
     }
+  },
+  {
+    name: 'ui_ux_inspect_project',
+    description: 'Inspects any project directory (or workspace) to automatically detect framework (Laravel/Blade, React/Next.js, Vue/Nuxt, Svelte, HTML), Tailwind CSS version (v3 vs v4), icon library, and UI stack.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_path: {
+          type: 'string',
+          description: 'Path to project root. Defaults to current working directory.'
+        }
+      }
+    }
+  },
+  {
+    name: 'ui_ux_convert_component',
+    description: 'Converts frontend component markup between HTML/Tailwind, Laravel Blade + Livewire, React + TypeScript + Shadcn UI, Vue 3 (Composition API), and Svelte 5.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        code_snippet: {
+          type: 'string',
+          description: 'The component markup to convert.'
+        },
+        target_framework: {
+          type: 'string',
+          enum: ['blade_livewire', 'react_shadcn', 'vue_tailwind', 'svelte_tailwind', 'html_tailwind'],
+          description: 'Target framework syntax.'
+        },
+        component_name: {
+          type: 'string',
+          description: 'Optional name for the generated component (e.g. "ServerCard", "PricingMatrix").'
+        }
+      },
+      required: ['code_snippet', 'target_framework']
+    }
+  },
+  {
+    name: 'ui_ux_color_contrast',
+    description: 'Calculates mathematical WCAG 2.1/2.2 relative luminance and contrast ratio between foreground and background colors. Evaluates AA and AAA compliance for normal text, large text, and UI controls, and suggests accessible color alternatives.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        foreground_hex: {
+          type: 'string',
+          description: 'Foreground/text hex color (e.g. "#4F46E5").'
+        },
+        background_hex: {
+          type: 'string',
+          description: 'Background surface hex color (e.g. "#FFFFFF" or "#0F172A").'
+        },
+        font_size_pt: {
+          type: 'number',
+          description: 'Font size in points (default: 16pt for normal text).'
+        },
+        is_bold: {
+          type: 'boolean',
+          description: 'Whether the text is bold (default: false).'
+        }
+      },
+      required: ['foreground_hex', 'background_hex']
+    }
   }
 ];
 
 async function handleToolCall(name, args) {
-  // 1. ui_ux_suggest_pattern (Instant offline)
+  // 1. ui_ux_suggest_pattern
   if (name === 'ui_ux_suggest_pattern') {
     const patternKey = args.component_type;
-    const pattern = PATTERNS[patternKey];
-    if (!pattern) {
-      throw new Error(`Unknown component type: ${patternKey}. Available: ${Object.keys(PATTERNS).join(', ')}`);
-    }
+    const result = getPattern(patternKey, {
+      brand_name: args.brand_name,
+      currency_symbol: args.currency_symbol,
+      framework: args.framework,
+      color_scheme: args.color_scheme
+    });
 
-    const result = {
-      component: patternKey,
-      name: pattern.name,
-      description: pattern.description,
-      ux_guidelines: pattern.ux_guidelines
-    };
-
-    if (args.include_code !== false) {
-      result.html_tailwind = pattern.html_tailwind;
+    if (args.include_code === false) {
+      delete result.code;
     }
 
     return {
@@ -134,28 +238,49 @@ async function handleToolCall(name, args) {
     };
   }
 
-  // 2. ui_ux_generate_custom_design (OpenAI-compatible)
+  // 2. ui_ux_generate_custom_design
   if (name === 'ui_ux_generate_custom_design') {
-    const framework = args.target_framework || 'html_tailwind';
+    let framework = args.target_framework;
+    let tailwindVer = args.tailwind_version || 'auto';
+    let iconSet = 'lucide or heroicons';
+
+    // Auto-detect project context if project_path provided or framework omitted
+    if (args.project_path || !framework) {
+      const detected = ProjectDetector.inspect(args.project_path || process.cwd());
+      if (!framework) framework = detected.recommended_generator_framework;
+      if (tailwindVer === 'auto') tailwindVer = detected.tailwind_version;
+      iconSet = detected.icon_set;
+    }
+
+    framework = framework || 'html_tailwind';
     const themeMode = args.theme_mode || 'both';
 
-    const systemPrompt = `You are a world-class Frontend UI/UX Architect specializing in modern Tailwind CSS, Shadcn UI, and high-converting web applications.
-Guidelines:
-1. Produce clean, modern, accessible semantic markup with Tailwind CSS utilities.
-2. Ensure mobile-first responsiveness (sm:, md:, lg: breakpoints).
-3. If theme_mode is "both", include dark: variants for backgrounds, texts, and borders.
-4. Ensure interactive touch targets are at least 44x44px.
-5. Provide the output in markdown with:
-   - A clean code block containing the complete copy-pasteable component.
-   - A bulleted section explaining key UI/UX decisions, conversion psychology, and accessibility features.`;
+    const systemPrompt = `You are an elite Principal Frontend UI/UX Architect specializing in modern Tailwind CSS, Shadcn UI, and high-converting web applications.
+Stack Context:
+- Target Framework: ${framework}
+- Tailwind Version: ${tailwindVer === 'v4' ? 'Tailwind CSS v4 (@theme & CSS variables)' : 'Tailwind CSS v3 (standard config)'}
+- Icon Set: ${iconSet}
+- Theme Support: ${themeMode}
 
-    const userPrompt = `Target Framework: ${framework}\nTheme Mode: ${themeMode}\nUser Request: ${args.prompt}`;
+Strict Design & Engineering Guidelines:
+1. Produce clean, modern, accessible semantic markup matching ${framework} conventions.
+2. Ensure mobile-first responsiveness (sm:, md:, lg:, xl: breakpoints).
+3. If theme_mode is "both", include dark: variants for all surfaces, texts, borders, and inputs.
+4. Ensure interactive touch targets are at least 44x44px (min-h-[44px], py-2.5 px-4).
+5. Ensure WCAG 2.2 AA contrast compliance (4.5:1 minimum on text, 3:1 on UI boundaries).
+6. Provide output with:
+   - A clean code block containing the complete copy-pasteable component.
+   - A bulleted section explaining key UI/UX psychology, conversion decisions, and accessibility features.`;
+
+    const userPrompt = `Generate a production-ready component for:\n${args.prompt}`;
 
     try {
       const response = await OpenAIClient.complete([
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
-      ]);
+      ], {
+        thinking_enabled: args.thinking_enabled !== false
+      });
 
       return {
         content: [
@@ -166,12 +291,13 @@ Guidelines:
         ]
       };
     } catch (err) {
-      // Graceful fallback to catalog suggestion if API fails or is unconfigured
+      // Graceful fallback to rich catalog pattern
+      const fallbackPattern = getPattern('hero_section', { framework });
       return {
         content: [
           {
             type: 'text',
-            text: `AI Custom Design Notice: ${err.message}\n\nFalling back to high-converting catalog pattern:\n` + JSON.stringify(PATTERNS.hero_section, null, 2)
+            text: `AI Custom Design Notice: ${err.message}\n\nFalling back to high-converting catalog pattern:\n` + JSON.stringify(fallbackPattern, null, 2)
           }
         ]
       };
@@ -195,12 +321,61 @@ Guidelines:
   if (name === 'ui_ux_design_tokens') {
     const preset = args.theme_preset || 'cloud_hosting';
     const mode = args.mode || 'both';
-    const tokens = DesignTokens.generate(preset, mode);
+    const tokens = DesignTokens.generate(preset, mode, {
+      custom_hex: args.custom_hex,
+      tailwind_version: args.tailwind_version
+    });
     return {
       content: [
         {
           type: 'text',
           text: JSON.stringify(tokens, null, 2)
+        }
+      ]
+    };
+  }
+
+  // 5. ui_ux_inspect_project (NEW)
+  if (name === 'ui_ux_inspect_project') {
+    const profile = ProjectDetector.inspect(args.project_path || process.cwd());
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(profile, null, 2)
+        }
+      ]
+    };
+  }
+
+  // 6. ui_ux_convert_component (NEW)
+  if (name === 'ui_ux_convert_component') {
+    const converted = ComponentConverter.convert(args.code_snippet, args.target_framework, {
+      component_name: args.component_name
+    });
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(converted, null, 2)
+        }
+      ]
+    };
+  }
+
+  // 7. ui_ux_color_contrast (NEW)
+  if (name === 'ui_ux_color_contrast') {
+    const evaluation = ColorEngine.evaluateWcag(
+      args.foreground_hex,
+      args.background_hex,
+      args.font_size_pt || 16,
+      args.is_bold || false
+    );
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(evaluation, null, 2)
         }
       ]
     };
@@ -249,7 +424,7 @@ rl.on('line', async (line) => {
             },
             serverInfo: {
               name: 'ui-ux-mcp',
-              version: '1.0.0'
+              version: '2.0.0'
             }
           }
         });

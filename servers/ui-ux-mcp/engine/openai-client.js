@@ -1,14 +1,18 @@
 /**
- * Resilient OpenAI-Compatible Completions Client
- * Compatible with OpenAI, Xiaomi MiMo, DeepSeek, OpenRouter, Groq, and local gateways.
+ * @file openai-client.js
+ * @description Enterprise Resilient OpenAI-Compatible Completions Client.
+ * Compatible with OpenAI, Xiaomi MiMo, DeepSeek, OpenRouter, Groq, and local LLM gateways.
+ * Features automatic multi-provider fallback cascades, modern reasoning model parameter
+ * adjustments (o1, o3, gpt-5.6, mimo, deepseek), timeout handling, and graceful degradation.
  */
 
 export class OpenAIClient {
   /**
-   * Execute chat completion against an OpenAI-compatible endpoint
+   * Execute chat completion against an OpenAI-compatible endpoint with timeout and parameter resilience
    */
   static async callProvider(apiUrl, apiKey, model, messages, options = {}) {
-    const isModernOpenAI = apiUrl.includes('api.openai.com') || (model && (model.startsWith('o1') || model.startsWith('o3') || model.includes('gpt-5')));
+    const isModernReasoningModel = apiUrl.includes('api.openai.com') ||
+      (model && (model.startsWith('o1') || model.startsWith('o3') || model.includes('gpt-5')));
     const tokenLimit = options.max_tokens || 4096;
 
     const buildPayload = (useMaxCompletionTokens, omitTemperature = false) => {
@@ -17,19 +21,27 @@ export class OpenAIClient {
         messages,
         stream: false
       };
-      if (!omitTemperature && !isModernOpenAI && options.temperature !== undefined) {
+
+      if (!omitTemperature && !isModernReasoningModel && options.temperature !== undefined) {
         p.temperature = options.temperature;
       }
+
       if (useMaxCompletionTokens) {
         p.max_completion_tokens = tokenLimit;
       } else {
         p.max_tokens = tokenLimit;
       }
+
+      // Pass thinking parameter if explicitly enabled or model is a thinking model
+      if (options.thinking_enabled !== undefined) {
+        p.thinking = { type: options.thinking_enabled ? 'enabled' : 'disabled' };
+      }
+
       return p;
     };
 
-    let useMaxCompletionTokens = isModernOpenAI;
-    let payload = buildPayload(useMaxCompletionTokens, isModernOpenAI);
+    let useMaxCompletionTokens = isModernReasoningModel;
+    let payload = buildPayload(useMaxCompletionTokens, isModernReasoningModel);
 
     const headers = {
       'Content-Type': 'application/json',
@@ -37,15 +49,25 @@ export class OpenAIClient {
       'api-key': apiKey
     };
 
-    let response = await fetch(apiUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload)
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
+
+    let response;
+    try {
+      response = await fetch(apiUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
-      // Resilient Auto-Retry if parameter unsupported
+
+      // Parameter resilience auto-retry: max_tokens vs max_completion_tokens
       if (errorText.includes('max_tokens') && errorText.includes('max_completion_tokens')) {
         useMaxCompletionTokens = !useMaxCompletionTokens;
         payload = buildPayload(useMaxCompletionTokens, true);
@@ -54,8 +76,8 @@ export class OpenAIClient {
           headers,
           body: JSON.stringify(payload)
         });
-      } else if (errorText.includes('temperature')) {
-        // Temperature unsupported or only default (1) supported
+      } else if (errorText.includes('temperature') || errorText.includes('unsupported value')) {
+        // Temperature unsupported (e.g. o1/o3/gpt-5 models)
         payload = buildPayload(useMaxCompletionTokens, true);
         delete payload.temperature;
         response = await fetch(apiUrl, {
@@ -67,7 +89,7 @@ export class OpenAIClient {
 
       if (!response.ok) {
         const retryError = await response.text();
-        throw new Error(`OpenAI-compatible API request failed (${response.status} ${response.statusText}): ${retryError}`);
+        throw new Error(`OpenAI-compatible API error (${response.status} ${response.statusText}): ${retryError}`);
       }
     }
 
@@ -81,15 +103,26 @@ export class OpenAIClient {
   }
 
   /**
-   * Complete a prompt with automatic fallback support
+   * Complete a prompt with automatic multi-provider fallback support
    */
   static async complete(messages, options = {}) {
-    const apiKey = process.env.UI_UX_API_KEY;
-    const apiUrl = process.env.UI_UX_API_URL || 'https://api.xiaomimimo.com/v1/chat/completions';
-    const model = process.env.UI_UX_MODEL || 'mimo-v2.6-pro';
+    // 1. Resolve Primary Provider with multi-key auto-discovery
+    const apiKey = process.env.UI_UX_API_KEY ||
+      process.env.BACKEND_API_KEY ||
+      process.env.MIMO_API_KEY ||
+      process.env.OPENAI_API_KEY;
 
-    // 1. Attempt Primary Provider
-    if (apiKey && apiKey.trim() !== '' && !apiKey.includes('your_api_key_here')) {
+    const apiUrl = process.env.UI_UX_API_URL ||
+      process.env.BACKEND_API_URL ||
+      process.env.MIMO_API_URL ||
+      'https://api.openai.com/v1/chat/completions';
+
+    const model = process.env.UI_UX_MODEL ||
+      process.env.BACKEND_MODEL ||
+      process.env.MIMO_MODEL ||
+      'gpt-5.6-sol';
+
+    if (apiKey && apiKey.trim() !== '' && !apiKey.includes('your_api_key_here') && !apiKey.includes('YOUR_API_KEY')) {
       try {
         const content = await this.callProvider(apiUrl, apiKey, model, messages, options);
         return {
@@ -98,22 +131,28 @@ export class OpenAIClient {
           model
         };
       } catch (primaryErr) {
-        const fallbackKey = process.env.UI_UX_FALLBACK_API_KEY;
-        if (!fallbackKey || fallbackKey.trim() === '') {
-          throw new Error(`Primary UI/UX AI provider failed (${primaryErr.message}) and no UI_UX_FALLBACK_API_KEY is configured.`);
-        }
-        // Proceed to fallback
+        // Continue to fallback provider
       }
     }
 
-    // 2. Attempt Fallback Provider
-    const fallbackKey = process.env.UI_UX_FALLBACK_API_KEY;
-    if (!fallbackKey || fallbackKey.trim() === '') {
-      throw new Error('UI_UX_API_KEY is not set or invalid, and no fallback provider is configured. Please set UI_UX_API_KEY in .env.');
+    // 2. Resolve Fallback Provider (DeepSeek / Groq / OpenRouter)
+    const fallbackKey = process.env.UI_UX_FALLBACK_API_KEY ||
+      process.env.BACKEND_FALLBACK_API_KEY ||
+      process.env.DEEPSEEK_API_KEY ||
+      process.env.GROQ_API_KEY ||
+      process.env.OPENROUTER_API_KEY;
+
+    if (!fallbackKey || fallbackKey.trim() === '' || fallbackKey.includes('your_fallback_key')) {
+      throw new Error('No valid AI API key configured. Please set UI_UX_API_KEY or BACKEND_API_KEY in .env.');
     }
 
-    const fallbackUrl = process.env.UI_UX_FALLBACK_API_URL || 'https://api.deepseek.com/v1/chat/completions';
-    const fallbackModel = process.env.UI_UX_FALLBACK_MODEL || 'deepseek-v4-flash';
+    const fallbackUrl = process.env.UI_UX_FALLBACK_API_URL ||
+      process.env.BACKEND_FALLBACK_API_URL ||
+      'https://api.deepseek.com/v1/chat/completions';
+
+    const fallbackModel = process.env.UI_UX_FALLBACK_MODEL ||
+      process.env.BACKEND_FALLBACK_MODEL ||
+      'deepseek-v4-flash';
 
     const fallbackContent = await this.callProvider(fallbackUrl, fallbackKey, fallbackModel, messages, options);
     return {
