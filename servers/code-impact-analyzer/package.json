@@ -1,0 +1,28 @@
+{
+  "name": "@maccpro/code-impact-analyzer",
+  "version": "1.0.0",
+  "description": "Enterprise Dynamic Code Impact Analysis, Blast Radius Calculator & Breaking Change Detector for Laravel, PHP & Full-Stack Systems",
+  "main": "server.js",
+  "type": "module",
+  "bin": {
+    "code-impact-analyzer": "./server.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/run-tests.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "code-impact-analysis",
+    "blast-radius",
+    "breaking-changes",
+    "laravel",
+    "php",
+    "ast",
+    "test-impact-analysis",
+    "antigravity"
+  ],
+  "author": "MaccPro Team",
+  "license": "MIT"
+}
