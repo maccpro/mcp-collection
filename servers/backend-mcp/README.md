@@ -103,10 +103,12 @@ Accepted as a direct alias for `backend_generate_code` to ensure existing workfl
 
 ## 🤖 Antigravity Automated Enforcement Rule
 
-To automatically offload application code generation and preserve primary assistant quota, the following rule is configured in Antigravity's global rules (`AGENTS.md`):
+To selectively offload heavy application code generation, maintain rapid response times, and preserve primary assistant quota without sacrificing architectural quality, the following rule is configured in Antigravity's global rules (`AGENTS.md`):
 
 ```markdown
-- **Auto Backend Code Generation Offload (backend-mcp)**: Offload routine application code generation, classes, APIs, algorithms, and business logic to `backend_generate_code` from `backend-mcp` to preserve primary quota. Architecture, system planning, shell execution, and testing remain strictly with Antigravity.
+- **Selective Backend Code Generation Offload & Mandatory Review (backend-mcp)**:
+  - **Selective Offload**: Offload heavy routine boilerplate, large application classes, full service layers, and extensive business logic to `backend_generate_code` from `backend-mcp` (or alias `mimo_generate_code`) to preserve primary quota. Do NOT offload small surgical edits, minor bug fixes, config adjustments, or simple single-method changes—handle those directly with primary Antigravity for speed and contextual precision.
+  - **Mandatory Review & Verification**: Antigravity must NEVER blindly insert or output generated code from `backend-mcp`. Always rigorously inspect, review, and refine the returned code for architectural compliance, security standards (SQL injection, XSS, input validation), and project conventions before applying it to the codebase.
 ```
 
 ---
