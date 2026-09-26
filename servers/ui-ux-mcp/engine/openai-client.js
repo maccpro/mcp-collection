@@ -32,9 +32,11 @@ export class OpenAIClient {
         p.max_tokens = tokenLimit;
       }
 
-      // Pass thinking parameter if explicitly enabled or model is a thinking model
+      // Pass thinking parameter if explicitly enabled or configured in environment
       if (options.thinking_enabled !== undefined) {
         p.thinking = { type: options.thinking_enabled ? 'enabled' : 'disabled' };
+      } else if (process.env.UI_UX_THINKING) {
+        p.thinking = { type: process.env.UI_UX_THINKING === 'disabled' ? 'disabled' : 'enabled' };
       }
 
       return p;
