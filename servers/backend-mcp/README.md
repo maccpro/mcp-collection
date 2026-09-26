@@ -1,27 +1,45 @@
-# Backend MCP Server (`backend-mcp`)
+# Enterprise Backend MCP Server (`backend-mcp`) v2.0
 
-A dedicated, zero-dependency **Model Context Protocol (MCP)** server for enterprise backend code generation, business logic, APIs, and algorithms powered by **Xiaomi MiMo** (`mimo-v2.6-pro`), **DeepSeek**, or any OpenAI-compatible provider.
+A resilient, zero-dependency, and fully dynamic **Model Context Protocol (MCP)** server for enterprise backend application engineering, clean architecture code generation, business logic implementation, security review, and API specification design.
 
-Designed specifically for AI coding assistants like **Google Antigravity**, **Claude Desktop**, and **Cursor** to offload heavy application code generation and preserve primary assistant quota.
+Powered by **Xiaomi MiMo** (`mimo-v2.6-pro`), **DeepSeek**, **OpenAI**, **Anthropic Claude**, **Google Gemini**, or **Local LLMs (Ollama)** with automatic cascading failover.
+
+Designed specifically for AI coding assistants like **Google Antigravity**, **Claude Desktop**, and **Cursor** to offload heavy routine boilerplate and complex backend domain logic while preserving primary assistant quota.
 
 ---
 
-## ⚡ Features
+## ⚡ Enterprise Features
 
-- **Enterprise Backend Code Generation:** Offloads classes, methods, database services, APIs, and business logic.
-- **Zero Dependencies:** Built entirely with Node.js standard libraries (`readline`, `fetch`). No heavy node_modules needed!
-- **Dynamic Configuration:** Easily customize API Key, API Endpoint, Model, and Thinking Mode via environment variables.
-- **Provider Agnostic:** Supports Xiaomi MiMo, DeepSeek, OpenAI, Qwen, or custom local gateways with automatic failover.
-- **Quota Saver:** Drastically reduces primary model token usage during large-scale development.
+- **Dynamic Multi-Framework Stack Detection:** Automatically inspects target workspaces to detect backend framework (Laravel, NestJS, Express, FastAPI, Django, Spring Boot, Go/Gin, Rust/Axum), ORM (Eloquent, Prisma, TypeORM, SQLAlchemy, GORM), and architectural layers.
+- **Architectural Persona Synthesis:** Automatically injects framework-specific clean code mandates (e.g. strict Form Request validation, Service/Action classes, API Resource serialization, DB transaction safety, DTO validation).
+- **Multi-Provider Failover Cascades:** Primary (MiMo / OpenAI / Claude) ➔ Fallback (DeepSeek / Groq) ➔ Local Offline (Ollama).
+- **Automated Resilience:** Exponential backoff with jitter on HTTP 429 / 5xx, `AbortController` timeout protection, and dynamic parameter adaptation (`max_tokens` vs `max_completion_tokens`, reasoning toggles).
+- **OWASP Security & Code Review:** Real-time static heuristic checks + AI semantic audit for SQL Injection, IDOR, Mass Assignment, Sensitive Data Leaks, and N+1 query bottlenecks.
+- **OpenAPI 3.1 & Postman Generator:** Instantly converts backend code or routes into valid OpenAPI 3.1 specifications (YAML/JSON) or Postman collections.
+- **Zero External Dependencies:** Built 100% on Node.js standard libraries (`node:fs`, `node:path`, `node:readline`, `node:url`, native `fetch`). No `npm install` required!
+
+---
+
+## 📦 Exposed MCP Tools (8 Tools)
+
+| Tool Name | Purpose | Key Parameters |
+| :--- | :--- | :--- |
+| `backend_generate_code` | **Primary.** Generates enterprise backend code and business logic with framework & layer awareness. | `prompt`, `context`, `project_path`, `framework`, `layer`, `thinking_enabled`, `max_tokens`, `model`, `provider` |
+| `mimo_generate_code` | Backward-compatible alias for existing pipelines. | Same as `backend_generate_code` |
+| `backend_refactor_code` | Refactors backend code to SOLID, Clean Architecture, DRY, and high performance. | `code`, `instruction`, `project_path`, `framework`, `focus`, `thinking_enabled`, `max_tokens` |
+| `backend_review_code` | Deep security (OWASP), architecture, and performance review. | `code`, `project_path`, `framework`, `rules` |
+| `backend_explain_logic` | Explains complex algorithms, state machines, business workflows, and blast radius. | `code`, `context`, `focus` (`flow`, `edge_cases`, `blast_radius`, `security`) |
+| `backend_generate_api_spec` | Generates standardized OpenAPI 3.1 (YAML/JSON) or Postman collections. | `source_code`, `routes_info`, `format`, `title`, `version` |
+| `backend_detect_stack` | Dynamic inspector of project workspace to report language, framework, ORM, and layers. | `project_path` |
+| `backend_health_check` | Diagnostics tool to test connectivity, model availability, and response latency. | `provider` (`all`, `primary`, `fallback`, `local`), `test_call` (boolean) |
 
 ---
 
 ## 🛠️ Configuration & Setup
 
-### 1. Zero-Config Client Setup (Recommended)
-`backend-mcp` automatically loads environment variables from its local `.env` file (copied from `.env.example`).
+### 1. Client Configuration
 
-In Google Antigravity (`mcp_config.json`):
+#### Google Antigravity (`mcp_config.json`):
 ```json
 {
   "mcpServers": {
@@ -35,14 +53,14 @@ In Google Antigravity (`mcp_config.json`):
 }
 ```
 
-In Claude Desktop (`claude_desktop_config.json`):
+#### Claude Desktop (`claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
     "backend-mcp": {
       "command": "node",
       "args": [
-        "/absolute/path/to/mcp-collection/servers/backend-mcp/server.js"
+        "/path/to/mcp-collection/servers/backend-mcp/server.js"
       ]
     }
   }
@@ -51,59 +69,45 @@ In Claude Desktop (`claude_desktop_config.json`):
 
 ---
 
-### 2. Local `.env` File Configuration
-Create a `.env` file in `servers/backend-mcp/.env` (or copy from `.env.example`):
+### 2. Environment Configuration (`.env`)
+
+Create or update `.env` in `servers/backend-mcp/.env`:
 
 ```env
-# Primary Provider (e.g. Xiaomi MiMo / DeepSeek / OpenAI-compatible)
+# ------------------------------------------------------------------------------
+# Primary Provider (Xiaomi MiMo / OpenAI / DeepSeek / Claude)
+# ------------------------------------------------------------------------------
 BACKEND_API_KEY=your_actual_api_key_here
 BACKEND_API_URL=https://api.xiaomimimo.com/v1/chat/completions
 BACKEND_MODEL=mimo-v2.6-pro
 BACKEND_THINKING=enabled
 
-# Fallback: DeepSeek / Secondary Provider
+# ------------------------------------------------------------------------------
+# Fallback Provider (DeepSeek / Groq / OpenRouter)
+# ------------------------------------------------------------------------------
 BACKEND_FALLBACK_API_KEY=your_fallback_api_key_here
 BACKEND_FALLBACK_API_URL=https://api.deepseek.com/v1/chat/completions
 BACKEND_FALLBACK_MODEL=deepseek-v4-flash
+
+# ------------------------------------------------------------------------------
+# Local / Offline Provider (Ollama / LocalAI)
+# ------------------------------------------------------------------------------
+BACKEND_LOCAL_API_URL=http://localhost:11434/v1/chat/completions
+BACKEND_LOCAL_MODEL=deepseek-coder-v2:latest
+
+# ------------------------------------------------------------------------------
+# Resilience Settings
+# ------------------------------------------------------------------------------
+BACKEND_TIMEOUT_MS=90000
 ```
 
-*(Note: `MIMO_*` variable names are also fully supported for backward compatibility).*
-
----
-
-## 🔧 Environment Variables
-
-| Variable | Description | Default |
-| :--- | :--- | :--- |
-| `BACKEND_API_KEY` (or `MIMO_API_KEY`) | **Required.** Primary backend provider API Key | None |
-| `BACKEND_API_URL` (or `MIMO_API_URL`) | Endpoint for chat completions | `https://api.xiaomimimo.com/v1/chat/completions` |
-| `BACKEND_MODEL` (or `MIMO_MODEL`) | Target model name | `mimo-v2.6-pro` |
-| `BACKEND_THINKING` (or `MIMO_THINKING`) | Deep reasoning mode (`enabled` or `disabled`) | `enabled` |
-| `BACKEND_FALLBACK_API_KEY` | Optional fallback provider API key (e.g. DeepSeek) | None |
-| `BACKEND_FALLBACK_API_URL` | Optional fallback endpoint | `https://api.deepseek.com/v1/chat/completions` |
-| `BACKEND_FALLBACK_MODEL` | Optional fallback model name | `deepseek-v4-flash` |
-
----
-
-## 📦 Exposed MCP Tools
-
-### `backend_generate_code` *(Primary)*
-Generates, refactors, and implements backend application source code, API services, and business logic.
-- **Parameters:**
-  - `prompt` (string, required): Instructions on what code or logic to write or refactor.
-  - `context` (string, optional): Existing code, file snippets, or schema context.
-  - `system_prompt` (string, optional): Custom persona/instructions for code generation.
-  - `thinking_enabled` (boolean, optional): Enable reasoning tokens for complex algorithmic tasks (default: `true`).
-  - `max_tokens` (number, optional): Maximum tokens to generate (default: `4096`).
-
-### `mimo_generate_code` *(Backward-compatible Alias)*
-Accepted as a direct alias for `backend_generate_code` to ensure existing workflows remain seamless.
+*(Note: `MIMO_*` variable names remain 100% backward-compatible).*
 
 ---
 
 ## 🤖 Antigravity Automated Enforcement Rule
 
-To selectively offload heavy application code generation, maintain rapid response times, and preserve primary assistant quota without sacrificing architectural quality, the following rule is configured in Antigravity's global rules (`AGENTS.md`):
+To selectively offload heavy application code generation and business logic implementation while preserving primary quota, configure this rule in Antigravity's global rules (`AGENTS.md`):
 
 ```markdown
 - **Selective Backend Code Generation Offload & Mandatory Review (backend-mcp)**:
@@ -113,5 +117,17 @@ To selectively offload heavy application code generation, maintain rapid respons
 
 ---
 
+## 🧪 Testing
+
+Run the comprehensive enterprise test suite:
+
+```bash
+npm test
+# or directly:
+node test/run-tests.js
+```
+
+---
+
 ## 📄 License
-MIT
+MIT © MaccPro Team

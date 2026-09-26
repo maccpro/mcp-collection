@@ -1,7 +1,7 @@
 {
   "name": "@maccpro/backend-mcp",
-  "version": "1.0.0",
-  "description": "Enterprise Backend Application Code & Business Logic Generator MCP Server for AI Coding Assistants",
+  "version": "2.0.0",
+  "description": "Enterprise-Grade Resilient Backend Code, Logic, Security & API Spec Generator MCP Server for AI Coding Assistants",
   "main": "server.js",
   "type": "module",
   "bin": {
@@ -16,6 +16,12 @@
     "model-context-protocol",
     "backend",
     "business-logic",
+    "clean-architecture",
+    "laravel",
+    "nestjs",
+    "fastapi",
+    "spring-boot",
+    "golang",
     "antigravity",
     "claude",
     "cursor",
