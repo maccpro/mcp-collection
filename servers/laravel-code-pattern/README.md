@@ -33,7 +33,7 @@ Open `mcp_config.json` (under Settings > Customizations > Open MCP Config):
     "laravel-code-pattern": {
       "command": "node",
       "args": [
-        "c:/Users/JoypurHost/Desktop/mcp-collection/servers/laravel-code-pattern/server.js"
+        "D:/mcp-collection/servers/laravel-code-pattern/server.js"
       ]
     }
   }

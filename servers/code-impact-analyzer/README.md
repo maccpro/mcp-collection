@@ -63,7 +63,7 @@ npm test
   "mcpServers": {
     "code-impact-analyzer": {
       "command": "node",
-      "args": ["c:/Users/JoypurHost/Desktop/mcp-collection/servers/code-impact-analyzer/server.js"],
+      "args": ["D:/mcp-collection/servers/code-impact-analyzer/server.js"],
       "env": {
         "CIA_AI_ENABLED": "true",
         "CIA_AI_PROVIDER": "auto"

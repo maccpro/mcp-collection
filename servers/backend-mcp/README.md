@@ -46,7 +46,7 @@ Designed specifically for AI coding assistants like **Google Antigravity**, **Cl
     "backend-mcp": {
       "command": "node",
       "args": [
-        "c:/Users/JoypurHost/Desktop/mcp-collection/servers/backend-mcp/server.js"
+        "D:/mcp-collection/servers/backend-mcp/server.js"
       ]
     }
   }

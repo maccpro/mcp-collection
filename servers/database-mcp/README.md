@@ -69,7 +69,7 @@ npm test
   "mcpServers": {
     "database-mcp": {
       "command": "node",
-      "args": ["c:/Users/JoypurHost/Desktop/mcp-collection/servers/database-mcp/server.js"],
+      "args": ["D:/mcp-collection/servers/database-mcp/server.js"],
       "env": {
         "DB_DEFAULT_DIALECT": "mariadb",
         "DB_MIGRATION_SCOPE": "standard"

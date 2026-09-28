@@ -29,7 +29,7 @@ Open `mcp_config.json` (under Settings > Customizations > Open MCP Config):
     "ui-ux-mcp": {
       "command": "node",
       "args": [
-        "c:/Users/JoypurHost/Desktop/mcp-collection/servers/ui-ux-mcp/server.js"
+        "D:/mcp-collection/servers/ui-ux-mcp/server.js"
       ]
     }
   }
