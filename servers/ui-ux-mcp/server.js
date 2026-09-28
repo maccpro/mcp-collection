@@ -11,6 +11,8 @@ import { OpenAIClient } from './engine/openai-client.js';
 import { ProjectDetector } from './engine/project-detector.js';
 import { ComponentConverter } from './engine/component-converter.js';
 import { ColorEngine } from './engine/color-engine.js';
+import { LayoutScaffold } from './engine/layout-scaffold.js';
+import { FrontendRelationalEngine } from './engine/frontend-relational-engine.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,15 +31,27 @@ const TOOLS = [
           type: 'string',
           enum: [
             'pricing_table',
-            'dashboard_metrics',
-            'checkout_flow',
-            'hero_section',
-            'data_table',
             'server_resource_monitor',
             'vps_configurator',
+            'dashboard_metrics',
+            'hero_section',
             'command_palette',
+            'data_table',
             'sidebar_navigation',
-            'modal_dialog'
+            'checkout_flow',
+            'modal_dialog',
+            'stat_cards_kpi',
+            'user_management_table',
+            'invoice_receipt_template',
+            'settings_tabs_layout',
+            'notification_feed',
+            'filter_bar_search',
+            'empty_state_screen',
+            'file_upload_dropzone',
+            'stepper_wizard',
+            'two_factor_auth_form',
+            'status_page_incident',
+            'domain_search_box'
           ],
           description: 'The type of UI component pattern to retrieve.'
         },
@@ -129,7 +143,18 @@ const TOOLS = [
       properties: {
         theme_preset: {
           type: 'string',
-          enum: ['cloud_hosting', 'saas_modern', 'ecommerce_vibrant', 'enterprise_slate', 'cyber_neon', 'fintech_trust'],
+          enum: [
+            'cloud_hosting',
+            'saas_modern',
+            'ecommerce_vibrant',
+            'enterprise_slate',
+            'cyber_neon',
+            'fintech_trust',
+            'fintech_gold',
+            'health_vital',
+            'cyberpunk_neon',
+            'luxury_emerald'
+          ],
           description: 'Industry design theme preset (default: cloud_hosting).'
         },
         custom_hex: {
@@ -209,6 +234,51 @@ const TOOLS = [
         }
       },
       required: ['foreground_hex', 'background_hex']
+    }
+  },
+  {
+    name: 'ui_ux_layout_scaffold',
+    description: 'Generates complete, production-ready, accessible, mobile-first responsive layout scaffolds (Admin Dashboard Shell, SaaS Portal Shell, Landing Page Shell) across HTML/Tailwind, Blade/Livewire, React/Shadcn, Vue 3, or Svelte 5.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scaffold_type: {
+          type: 'string',
+          enum: ['admin_dashboard_shell', 'saas_portal_shell', 'landing_page_shell'],
+          description: 'The type of application shell layout to scaffold.'
+        },
+        framework: {
+          type: 'string',
+          enum: ['html_tailwind', 'blade_livewire', 'react_shadcn', 'vue_tailwind', 'svelte_tailwind'],
+          description: 'Target frontend template syntax (default: html_tailwind).'
+        },
+        brand_name: {
+          type: 'string',
+          description: 'Custom brand or project name to interpolate into copy (e.g. "JoypurHost", "MaccPro").'
+        },
+        currency_symbol: {
+          type: 'string',
+          description: 'Currency symbol to display (e.g. "৳", "$", "€"). Default: "$".'
+        },
+        color_scheme: {
+          type: 'string',
+          description: 'Primary Tailwind color family or custom hex (default: indigo).'
+        }
+      },
+      required: ['scaffold_type']
+    }
+  },
+  {
+    name: 'ui_ux_introspect_ui_architecture',
+    description: 'Deep dynamic introspection of project UI/UX architecture. Maps component hierarchy (Layouts -> Pages -> Organisms -> Molecules -> Atoms), detects design token drift (hardcoded hexes), flags monolithic components (>250 lines), and generates a visual Mermaid architecture diagram.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_path: {
+          type: 'string',
+          description: 'Path to project root. Defaults to current working directory.'
+        }
+      }
     }
   }
 ];
@@ -379,6 +449,37 @@ Strict Design & Engineering Guidelines:
         {
           type: 'text',
           text: JSON.stringify(evaluation, null, 2)
+        }
+      ]
+    };
+  }
+
+  // 8. ui_ux_layout_scaffold
+  if (name === 'ui_ux_layout_scaffold') {
+    const result = LayoutScaffold.getScaffold(args.scaffold_type, {
+      brand_name: args.brand_name,
+      currency_symbol: args.currency_symbol,
+      framework: args.framework,
+      color_scheme: args.color_scheme
+    });
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(result, null, 2)
+        }
+      ]
+    };
+  }
+
+  // 9. ui_ux_introspect_ui_architecture
+  if (name === 'ui_ux_introspect_ui_architecture') {
+    const profile = FrontendRelationalEngine.introspect(args.project_path || process.cwd());
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(profile, null, 2)
         }
       ]
     };

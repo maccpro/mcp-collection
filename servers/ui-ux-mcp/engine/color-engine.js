@@ -327,4 +327,133 @@ export class ColorEngine {
 
     return scale;
   }
+
+  /**
+   * Convert sRGB to OKLCH color coordinates (perceptually uniform color space).
+   * Used natively by Tailwind CSS v4 @theme and modern CSS color-4 spec.
+   * @param {number} r 0-255
+   * @param {number} g 0-255
+   * @param {number} b 0-255
+   * @returns {{ l: number, c: number, h: number, css: string }}
+   */
+  static rgbToOklch(r, g, b) {
+    // 1. Convert sRGB [0, 255] to linear sRGB [0, 1]
+    const toLinear = (c) => {
+      const v = c / 255;
+      return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    };
+
+    const rLin = toLinear(r);
+    const gLin = toLinear(g);
+    const bLin = toLinear(b);
+
+    // 2. Convert linear sRGB to LMS (Oklab M1 matrix)
+    const l_ = Math.cbrt(0.4122214708 * rLin + 0.5363325363 * gLin + 0.0514459929 * bLin);
+    const m_ = Math.cbrt(0.2119034982 * rLin + 0.6806995451 * gLin + 0.1073969566 * bLin);
+    const s_ = Math.cbrt(0.0883024619 * rLin + 0.2817188376 * gLin + 0.6299787005 * bLin);
+
+    // 3. Convert LMS to Oklab (L, a, b)
+    const L = 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_;
+    const a = 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_;
+    const bLab = 0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_;
+
+    // 4. Convert Oklab to OKLCH (Chroma & Hue angle)
+    const C = Math.sqrt(a * a + bLab * bLab);
+    let H = (Math.atan2(bLab, a) * 180) / Math.PI;
+    if (H < 0) H += 360;
+
+    const roundL = Math.round(L * 1000) / 1000;
+    const roundC = Math.round(C * 1000) / 1000;
+    const roundH = Math.round(H * 10) / 10;
+
+    return {
+      l: roundL,
+      c: roundC,
+      h: roundH,
+      css: `oklch(${roundL} ${roundC} ${roundH})`
+    };
+  }
+
+  /**
+   * Convert hex color string directly to OKLCH
+   * @param {string} hex
+   * @returns {{ l: number, c: number, h: number, css: string }}
+   */
+  static hexToOklch(hex) {
+    const { r, g, b } = this.hexToRgb(hex);
+    return this.rgbToOklch(r, g, b);
+  }
+
+  /**
+   * Dynamically remap Tailwind CSS color classes across any markup string.
+   * Enables true dynamic theming without hardcoding colors.
+   * @param {string} markup HTML/Blade/JSX markup containing color classes (e.g. indigo-600)
+   * @param {string} targetColorScheme Target Tailwind color family or hex (e.g. 'emerald', 'violet', '#10B981')
+   * @param {string} baseFamily Color family currently used in the template (default: 'indigo')
+   * @returns {string} Markup with dynamically remapped color classes
+   */
+  static remapTailwindPalette(markup, targetColorScheme, baseFamily = 'indigo') {
+    if (!markup || !targetColorScheme) return markup;
+
+    const cleanTarget = targetColorScheme.trim().toLowerCase();
+    const cleanBase = baseFamily.trim().toLowerCase();
+
+    // Standard supported Tailwind color families
+    const tailwindFamilies = [
+      'slate', 'gray', 'zinc', 'neutral', 'stone',
+      'red', 'orange', 'amber', 'yellow', 'lime', 'green', 'emerald', 'teal', 'cyan', 'sky', 'blue', 'indigo', 'violet', 'purple', 'fuchsia', 'pink', 'rose'
+    ];
+
+    let targetFamily = cleanTarget;
+
+    // If target is a custom hex (starts with # or 6-char hex), find closest Tailwind family by hue
+    if (cleanTarget.startsWith('#') || /^[0-9a-f]{6}$/i.test(cleanTarget)) {
+      const rgb = this.hexToRgb(cleanTarget);
+      const { h } = this.rgbToHsl(rgb.r, rgb.g, rgb.b);
+
+      // Hue mapping table
+      if (h >= 345 || h < 15) targetFamily = 'rose';
+      else if (h >= 15 && h < 45) targetFamily = 'amber';
+      else if (h >= 45 && h < 75) targetFamily = 'yellow';
+      else if (h >= 75 && h < 150) targetFamily = 'emerald';
+      else if (h >= 150 && h < 190) targetFamily = 'teal';
+      else if (h >= 190 && h < 225) targetFamily = 'cyan';
+      else if (h >= 225 && h < 255) targetFamily = 'blue';
+      else if (h >= 255 && h < 285) targetFamily = 'indigo';
+      else if (h >= 285 && h < 315) targetFamily = 'violet';
+      else targetFamily = 'fuchsia';
+    }
+
+    if (!tailwindFamilies.includes(targetFamily) || targetFamily === cleanBase) {
+      return markup;
+    }
+
+    // Remap all occurrences of baseFamily with targetFamily across all Tailwind utility prefixes
+    const regex = new RegExp(`\\b([a-z-]+:)?([a-z-]+-)?${cleanBase}(-([0-9]{2,3}|DEFAULT|foreground))?\\b`, 'g');
+    return markup.replace(regex, (match) => {
+      return match.replace(cleanBase, targetFamily);
+    });
+  }
+
+  /**
+   * Evaluate contrast ratio for a color against multiple surfaces
+   * @param {string} colorHex
+   * @param {string[]} surfaces
+   * @returns {object}
+   */
+  static evaluateContrastMatrix(colorHex, surfaces = ['#ffffff', '#0f172a', '#1e293b', '#f8fafc']) {
+    const results = {};
+    for (const surface of surfaces) {
+      const ratio = this.getContrastRatio(colorHex, surface);
+      results[surface] = {
+        contrast_ratio: `${ratio}:1`,
+        ratio_number: ratio,
+        passes_normal_text_aa: ratio >= 4.5,
+        passes_large_text_aa: ratio >= 3.0,
+        passes_ui_controls: ratio >= 3.0
+      };
+    }
+    return results;
+  }
 }
+

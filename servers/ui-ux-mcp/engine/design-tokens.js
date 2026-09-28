@@ -84,6 +84,58 @@ export const THEME_PRESETS = {
       body: 'Inter, sans-serif',
       mono: 'Roboto Mono, monospace'
     }
+  },
+
+  fintech_gold: {
+    name: 'Wealth Management & Private Banking',
+    description: 'Deep obsidian and midnight navy with prestigious metallic gold and champagne accents.',
+    primary: '#B45309',
+    secondary: '#1E293B',
+    accent: '#10B981',
+    typography: {
+      heading: 'Cinzel, Plus Jakarta Sans, sans-serif',
+      body: 'Inter, sans-serif',
+      mono: 'JetBrains Mono, monospace'
+    }
+  },
+
+  health_vital: {
+    name: 'HealthTech, Clinical & Wellness Portals',
+    description: 'Fresh clinical teal, sage green, and airy high-trust white surfaces.',
+    primary: '#0D9488',
+    secondary: '#0284C7',
+    accent: '#10B981',
+    typography: {
+      heading: 'Plus Jakarta Sans, sans-serif',
+      body: 'Inter, sans-serif',
+      mono: 'monospace'
+    }
+  },
+
+  cyberpunk_neon: {
+    name: 'Cyberpunk & DevOps Terminal UI',
+    description: 'Electric neon green, glowing cyan, and deep pitch-black terminal surfaces.',
+    primary: '#22C55E',
+    secondary: '#06B6D4',
+    accent: '#F43F5E',
+    typography: {
+      heading: 'Space Grotesk, sans-serif',
+      body: 'Inter, sans-serif',
+      mono: 'Fira Code, monospace'
+    }
+  },
+
+  luxury_emerald: {
+    name: 'Luxury Brands & High-End Real Estate',
+    description: 'Deep British racing forest green, warm ivory, and subtle brass accents.',
+    primary: '#065F46',
+    secondary: '#D97706',
+    accent: '#BE185D',
+    typography: {
+      heading: 'Playfair Display, serif',
+      body: 'Inter, sans-serif',
+      mono: 'monospace'
+    }
   }
 };
 
@@ -158,7 +210,13 @@ module.exports = {
   }
 };`;
 
-    // 3. Generate Modern Tailwind v4 @theme CSS block
+    // Compute OKLCH scale for modern Tailwind v4
+    const oklchScale = {};
+    for (const [shade, data] of Object.entries(primaryScale)) {
+      oklchScale[shade] = ColorEngine.hexToOklch(data.hex);
+    }
+
+    // 3. Generate Modern Tailwind v4 @theme CSS block (Hex & OKLCH)
     const tailwindV4Theme = `/* Tailwind CSS v4 Modern @theme Directive for ${systemName} */
 @import "tailwindcss";
 
@@ -175,6 +233,10 @@ module.exports = {
   --color-brand-900: ${primaryScale[900].hex};
   --color-brand-950: ${primaryScale[950].hex};
   --color-brand: ${primaryScale[500].hex};
+
+  /* Native OKLCH High-Precision Color Tokens */
+  --color-brand-500-oklch: ${oklchScale[500].css};
+  --color-brand-600-oklch: ${oklchScale[600].css};
 
   --font-heading: "${basePreset.typography.heading}";
   --font-sans: "${basePreset.typography.body}";
@@ -237,16 +299,40 @@ module.exports = {
     const contrastOnWhite = ColorEngine.evaluateWcag(primaryScale[500].hex, '#ffffff');
     const contrastOnDark = ColorEngine.evaluateWcag(primaryScale[400].hex, '#0f172a');
 
+    // 6. Generate Complete Semantic CSS Custom Properties
+    const semanticCss = `:root {
+  --brand-primary: ${primaryScale[500].hex};
+  --brand-primary-hover: ${primaryScale[600].hex};
+  --brand-primary-contrast: ${primaryScale[500].contrast_text};
+  --brand-primary-oklch: ${oklchScale[500].css};
+  --brand-surface: #ffffff;
+  --brand-text: #0f172a;
+  --brand-border: #e2e8f0;
+}
+
+.dark {
+  --brand-primary: ${primaryScale[400].hex};
+  --brand-primary-hover: ${primaryScale[500].hex};
+  --brand-primary-contrast: ${primaryScale[400].contrast_text};
+  --brand-primary-oklch: ${oklchScale[400].css};
+  --brand-surface: #0f172a;
+  --brand-text: #f8fafc;
+  --brand-border: #1e293b;
+}`;
+
     return {
       preset_key: presetKey,
       preset_name: systemName,
+      anchor_color: primaryHex,
       primary_scale: primaryScale,
       secondary_scale: secondaryScale,
+      oklch_scale: oklchScale,
       typography: basePreset.typography,
       tailwind_config: tailwindV3Config,
       tailwind_v4_theme: tailwindV4Theme,
       shadcn_variables: shadcnVariables,
       css_variables: `:root {\n  --color-brand: ${primaryScale[500].hex};\n  --color-brand-foreground: ${primaryScale[500].contrast_text};\n}\n.dark {\n  --color-brand: ${primaryScale[400].hex};\n  --color-brand-foreground: ${primaryScale[400].contrast_text};\n}`,
+      semantic_css: semanticCss,
       wcag_contrast_audit: {
         primary_on_white: contrastOnWhite,
         primary_on_dark: contrastOnDark

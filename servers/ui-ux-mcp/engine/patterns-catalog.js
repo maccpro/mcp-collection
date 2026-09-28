@@ -12,6 +12,7 @@
  */
 
 import { ComponentConverter } from './component-converter.js';
+import { ColorEngine } from './color-engine.js';
 
 export const PATTERNS = {
   // ==========================================
@@ -637,6 +638,612 @@ export const PATTERNS = {
     </div>
   </div>
 </div>`
+  },
+
+  stat_cards_kpi: {
+    name: 'Executive SaaS / Cloud KPI Stat Cards Grid',
+    description: '4-column KPI telemetry grid with growth badges, trend sparkline placeholders, and accessible contrast indicators.',
+    ux_guidelines: [
+      'Use emerald for positive growth and rose for negative churn.',
+      'Provide aria-label describing trend direction and percentage for screen readers.',
+      'Ensure cards are touch-friendly with subtle hover elevations.'
+    ],
+    html_tailwind: `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 w-full">
+  <!-- Card 1: MRR -->
+  <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm hover:shadow-md transition">
+    <div class="flex items-center justify-between">
+      <span class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Monthly Revenue</span>
+      <span class="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400">
+        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+        +14.2%
+      </span>
+    </div>
+    <div class="mt-4 flex items-baseline gap-2">
+      <span class="text-3xl font-extrabold text-slate-900 dark:text-white">{{CURRENCY_SYMBOL}}48,290</span>
+      <span class="text-xs text-slate-400">vs last mo.</span>
+    </div>
+    <div class="mt-4 h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+      <div class="bg-indigo-600 h-1.5 rounded-full" style="width: 78%"></div>
+    </div>
+  </div>
+
+  <!-- Card 2: Active Cloud VPS -->
+  <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm hover:shadow-md transition">
+    <div class="flex items-center justify-between">
+      <span class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Active Instances</span>
+      <span class="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400">
+        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+        +8.6%
+      </span>
+    </div>
+    <div class="mt-4 flex items-baseline gap-2">
+      <span class="text-3xl font-extrabold text-slate-900 dark:text-white">1,429</span>
+      <span class="text-xs text-slate-400">nodes deployed</span>
+    </div>
+    <div class="mt-4 h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+      <div class="bg-emerald-500 h-1.5 rounded-full" style="width: 86%"></div>
+    </div>
+  </div>
+
+  <!-- Card 3: Global Latency -->
+  <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm hover:shadow-md transition">
+    <div class="flex items-center justify-between">
+      <span class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Avg Edge Latency</span>
+      <span class="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400">
+        -4ms
+      </span>
+    </div>
+    <div class="mt-4 flex items-baseline gap-2">
+      <span class="text-3xl font-extrabold text-slate-900 dark:text-white">18.4ms</span>
+      <span class="text-xs text-slate-400">BGP optimized</span>
+    </div>
+    <div class="mt-4 h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+      <div class="bg-cyan-500 h-1.5 rounded-full" style="width: 94%"></div>
+    </div>
+  </div>
+
+  <!-- Card 4: Uptime SLA -->
+  <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm hover:shadow-md transition">
+    <div class="flex items-center justify-between">
+      <span class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Infrastructure SLA</span>
+      <span class="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+        Operational
+      </span>
+    </div>
+    <div class="mt-4 flex items-baseline gap-2">
+      <span class="text-3xl font-extrabold text-slate-900 dark:text-white">99.98%</span>
+      <span class="text-xs text-slate-400">last 90 days</span>
+    </div>
+    <div class="mt-4 h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+      <div class="bg-indigo-600 h-1.5 rounded-full" style="width: 99%"></div>
+    </div>
+  </div>
+</div>`
+  },
+
+  user_management_table: {
+    name: 'Enterprise RBAC Team & User Management Table',
+    description: 'Role-based access control table with avatars, 2FA security badges, role selectors, and bulk actions.',
+    ux_guidelines: [
+      'Display clear status badges (Active, Pending, Suspended) with high-contrast text.',
+      'Show 2FA security indicators to help admins enforce zero-trust access.',
+      'Include accessible action buttons with min-h-[44px] hit areas.'
+    ],
+    html_tailwind: `<div class="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
+  <div class="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800">
+    <div>
+      <h3 class="text-lg font-bold text-slate-900 dark:text-white">Team Members</h3>
+      <p class="text-sm text-slate-500 dark:text-slate-400">Manage permissions, invite operators, and inspect 2FA security status on {{BRAND_NAME}}.</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <button class="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-sm font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition min-h-[44px]">Export CSV</button>
+      <button class="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold shadow-sm transition min-h-[44px] inline-flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        Invite Member
+      </button>
+    </div>
+  </div>
+
+  <div class="overflow-x-auto">
+    <table class="w-full text-left border-collapse">
+      <thead>
+        <tr class="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+          <th scope="col" class="py-4 px-6">User</th>
+          <th scope="col" class="py-4 px-6">Role</th>
+          <th scope="col" class="py-4 px-6">Status</th>
+          <th scope="col" class="py-4 px-6">2FA Security</th>
+          <th scope="col" class="py-4 px-6 text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100 dark:divide-slate-800 text-sm">
+        <tr class="hover:bg-slate-50/50 dark:hover:bg-slate-800/50 transition">
+          <td class="py-4 px-6 flex items-center gap-3">
+            <div class="w-10 h-10 rounded-full bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-400 font-bold flex items-center justify-center shrink-0">SB</div>
+            <div>
+              <div class="font-bold text-slate-900 dark:text-white">Sizar Babu</div>
+              <div class="text-xs text-slate-500">sizar@joypurhost.com</div>
+            </div>
+          </td>
+          <td class="py-4 px-6">
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">Super Admin</span>
+          </td>
+          <td class="py-4 px-6">
+            <span class="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Active
+            </span>
+          </td>
+          <td class="py-4 px-6">
+            <span class="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+              Enforced (Hardware)
+            </span>
+          </td>
+          <td class="py-4 px-6 text-right">
+            <button class="px-3 py-1.5 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg min-h-[36px]">Edit</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>`
+  },
+
+  invoice_receipt_template: {
+    name: 'Printable Enterprise Tax Invoice & Receipt',
+    description: 'Official corporate billing invoice with itemized table, VAT/Tax calculation, paid stamp, and print media CSS.',
+    ux_guidelines: [
+      'Include print:hidden on control buttons and print:border-none for paper generation.',
+      'Ensure high-contrast typography satisfying WCAG AAA for financial documents.',
+      'Provide clear breakdown of subtotal, tax percentages, and final payable balance.'
+    ],
+    html_tailwind: `<div class="max-w-4xl mx-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 sm:p-12 shadow-sm print:shadow-none print:border-none print:p-0">
+  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-6 border-b border-slate-200 dark:border-slate-800 pb-8">
+    <div>
+      <h2 class="text-2xl font-black text-slate-900 dark:text-white tracking-tight">{{BRAND_NAME}}</h2>
+      <p class="text-xs text-slate-500 mt-1">Enterprise Cloud & Data Center Infrastructure</p>
+    </div>
+    <div class="sm:text-right">
+      <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-400 mb-2">Paid In Full</span>
+      <div class="text-sm font-bold text-slate-900 dark:text-white">Invoice #INV-2026-8941</div>
+      <div class="text-xs text-slate-500">Date: Sep 28, 2026</div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 sm:grid-cols-2 gap-8 my-8 text-sm">
+    <div>
+      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Billed To</span>
+      <div class="mt-2 font-bold text-slate-900 dark:text-white">JoypurColo Enterprise Ltd.</div>
+      <div class="text-slate-600 dark:text-slate-400 text-xs mt-1">Joypurhat, Bangladesh</div>
+      <div class="text-slate-600 dark:text-slate-400 text-xs">VAT / BIN: 001928471-0201</div>
+    </div>
+    <div class="sm:text-right">
+      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Payment Details</span>
+      <div class="mt-2 font-bold text-slate-900 dark:text-white">Direct Bank / Card</div>
+      <div class="text-slate-600 dark:text-slate-400 text-xs mt-1">Txn ID: TXN_8819204918</div>
+      <div class="text-slate-600 dark:text-slate-400 text-xs">Payment Date: Sep 28, 2026</div>
+    </div>
+  </div>
+
+  <table class="w-full text-left border-collapse my-8">
+    <thead>
+      <tr class="border-b border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+        <th scope="col" class="py-3">Description</th>
+        <th scope="col" class="py-3 text-center">Period</th>
+        <th scope="col" class="py-3 text-right">Amount</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100 dark:divide-slate-800 text-sm">
+      <tr>
+        <td class="py-4">
+          <div class="font-bold text-slate-900 dark:text-white">High-Memory NVMe Cloud VPS (16 vCPU, 32 GB RAM)</div>
+          <div class="text-xs text-slate-500">Primary Node (BGP Anycast Dhaka)</div>
+        </td>
+        <td class="py-4 text-center text-slate-600 dark:text-slate-400 text-xs">1 Year</td>
+        <td class="py-4 text-right font-semibold text-slate-900 dark:text-white">{{CURRENCY_SYMBOL}}420.00</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="border-t border-slate-200 dark:border-slate-800 pt-6 flex justify-end">
+    <div class="w-full max-w-xs space-y-2 text-sm">
+      <div class="flex justify-between text-slate-600 dark:text-slate-400">
+        <span>Subtotal</span>
+        <span>{{CURRENCY_SYMBOL}}420.00</span>
+      </div>
+      <div class="flex justify-between text-slate-600 dark:text-slate-400">
+        <span>Standard VAT (5%)</span>
+        <span>{{CURRENCY_SYMBOL}}21.00</span>
+      </div>
+      <div class="flex justify-between pt-3 border-t border-slate-200 dark:border-slate-800 font-extrabold text-base text-slate-900 dark:text-white">
+        <span>Total Paid</span>
+        <span class="text-indigo-600 dark:text-indigo-400">{{CURRENCY_SYMBOL}}441.00</span>
+      </div>
+    </div>
+  </div>
+</div>`
+  },
+
+  settings_tabs_layout: {
+    name: 'Enterprise Account & Infrastructure Settings Shell',
+    description: 'Master-detail settings screen with vertical navigation tabs on desktop, responsive container, and save actions.',
+    ux_guidelines: [
+      'Keep destructive actions (Delete account/server) separated at the bottom in a red danger card.',
+      'Provide clear form labels associated with inputs.',
+      'Ensure sticky bottom action bar or dedicated primary save CTA.'
+    ],
+    html_tailwind: `<div class="max-w-6xl mx-auto w-full">
+  <div class="mb-8">
+    <h1 class="text-2xl font-bold text-slate-900 dark:text-white">Organization Settings</h1>
+    <p class="text-sm text-slate-500 mt-1">Configure security policies, API credentials, and notifications for {{BRAND_NAME}}.</p>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-4 gap-8">
+    <!-- Sidebar Navigation -->
+    <nav class="space-y-1">
+      <a href="#general" class="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 font-semibold text-sm min-h-[44px]">General Profile</a>
+      <a href="#security" class="flex items-center gap-3 px-4 py-2.5 rounded-xl text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium text-sm min-h-[44px]">Security & 2FA</a>
+      <a href="#billing" class="flex items-center gap-3 px-4 py-2.5 rounded-xl text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium text-sm min-h-[44px]">Billing & Plans</a>
+      <a href="#api" class="flex items-center gap-3 px-4 py-2.5 rounded-xl text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium text-sm min-h-[44px]">API Tokens</a>
+    </nav>
+
+    <!-- Main Content Form -->
+    <div class="md:col-span-3 space-y-6">
+      <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
+        <h3 class="text-lg font-bold text-slate-900 dark:text-white mb-1">Company Profile</h3>
+        <p class="text-xs text-slate-500 mb-6">This information appears on public billing statements.</p>
+        
+        <div class="space-y-4">
+          <div>
+            <label for="company_name" class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Company Name</label>
+            <input type="text" id="company_name" name="company_name" value="JoypurHost" class="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 min-h-[44px]" />
+          </div>
+          <div>
+            <label for="billing_email" class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Billing Email</label>
+            <input type="email" id="billing_email" name="billing_email" value="billing@joypurhost.com" class="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 min-h-[44px]" />
+          </div>
+        </div>
+
+        <div class="mt-6 flex justify-end">
+          <button class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm shadow transition min-h-[44px]">Save Changes</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>`
+  },
+
+  notification_feed: {
+    name: 'Real-Time Infrastructure Audit & Alert Timeline',
+    description: 'Event activity timeline with severity dot pulses, timestamps, actor avatars, and unread toggles.',
+    ux_guidelines: [
+      'Use standard semantic colors: Emerald (success), Amber (warning), Rose (error), Indigo (system info).',
+      'Provide clear relative timestamps (e.g. 5m ago, 2h ago).',
+      'Ensure timeline connector lines have sufficient contrast against dark/light surfaces.'
+    ],
+    html_tailwind: `<div class="w-full max-w-3xl mx-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
+  <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4 mb-6">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-xl bg-indigo-50 dark:bg-indigo-950 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+      </div>
+      <div>
+        <h3 class="text-base font-bold text-slate-900 dark:text-white">Audit & Security Log</h3>
+        <p class="text-xs text-slate-400">System actions executed across {{BRAND_NAME}} cluster.</p>
+      </div>
+    </div>
+    <button class="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline min-h-[36px]">Mark all read</button>
+  </div>
+
+  <div class="relative pl-6 space-y-6 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200 dark:before:bg-slate-800">
+    <!-- Item 1: Success -->
+    <div class="relative">
+      <div class="absolute -left-[27px] top-1 w-3.5 h-3.5 rounded-full bg-emerald-500 ring-4 ring-white dark:ring-slate-900"></div>
+      <div class="flex items-baseline justify-between gap-4">
+        <p class="text-sm font-semibold text-slate-900 dark:text-white">Automated Snapshot Created</p>
+        <span class="text-xs text-slate-400 shrink-0">4m ago</span>
+      </div>
+      <p class="text-xs text-slate-500 mt-1">Nightly NVMe backup finished successfully for instance node-dhk-01 (14.2 GB compressed).</p>
+    </div>
+
+    <!-- Item 2: Warning -->
+    <div class="relative">
+      <div class="absolute -left-[27px] top-1 w-3.5 h-3.5 rounded-full bg-amber-500 ring-4 ring-white dark:ring-slate-900"></div>
+      <div class="flex items-baseline justify-between gap-4">
+        <p class="text-sm font-semibold text-slate-900 dark:text-white">High Memory Utilization Warning</p>
+        <span class="text-xs text-slate-400 shrink-0">1h ago</span>
+      </div>
+      <p class="text-xs text-slate-500 mt-1">Database node-02 reached 87% RAM allocation. Auto-scaling recommended.</p>
+    </div>
+  </div>
+</div>`
+  },
+
+  filter_bar_search: {
+    name: 'Advanced Search Toolbar & Multi-Select Filter Bar',
+    description: 'Data filtering bar with search input, dropdown filter triggers, active tags, and grid/list view switcher.',
+    ux_guidelines: [
+      'Provide immediate clear-all CTA for active filters.',
+      'Include keyboard shortcut indicator (/ or Ctrl+K) in the search field.',
+      'Ensure touch targets for filter pills are at least 44px tall.'
+    ],
+    html_tailwind: `<div class="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm space-y-3">
+  <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+    <!-- Search Input -->
+    <div class="relative flex-1">
+      <svg class="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+      <input type="text" placeholder="Search servers, IPs, or tags... (Press / to focus)" class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 min-h-[44px]" aria-label="Search servers" />
+    </div>
+
+    <!-- Filter Buttons -->
+    <div class="flex items-center gap-2">
+      <button class="px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1.5 min-h-[44px]">
+        <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"/></svg>
+        Status: <span class="font-bold text-indigo-600 dark:text-indigo-400">All (84)</span>
+      </button>
+      <button class="px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 min-h-[44px]">Region: BGP Dhaka</button>
+    </div>
+  </div>
+
+  <!-- Active Filter Pills -->
+  <div class="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+    <span class="text-xs text-slate-400">Active filters:</span>
+    <span class="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+      Region: Asia-BD
+      <button class="hover:text-indigo-900" aria-label="Remove filter">&times;</button>
+    </span>
+    <button class="text-xs text-rose-500 font-semibold hover:underline ml-2">Reset all</button>
+  </div>
+</div>`
+  },
+
+  empty_state_screen: {
+    name: 'High-Converting Empty State Screen',
+    description: 'Empty state placeholder with SVG illustration container, descriptive guidance, and primary creation CTA.',
+    ux_guidelines: [
+      'Give clear guidance on what the feature does and why it is currently empty.',
+      'Provide a prominent primary action to unblock the user immediately.',
+      'Include a secondary link to relevant documentation.'
+    ],
+    html_tailwind: `<div class="w-full max-w-xl mx-auto text-center py-16 px-4 bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-800 rounded-3xl p-8">
+  <div class="w-16 h-16 mx-auto rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mb-6">
+    <svg class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+  </div>
+  <h3 class="text-xl font-bold text-slate-900 dark:text-white">No Cloud Instances Deployed</h3>
+  <p class="mt-2 text-sm text-slate-500 dark:text-slate-400 max-w-md mx-auto">
+    You haven't provisioned any NVMe cloud servers or databases yet on {{BRAND_NAME}}. Launch high-speed instances with instant setup.
+  </p>
+  <div class="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
+    <button class="w-full sm:w-auto px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-md transition min-h-[44px]">Deploy First Server</button>
+    <a href="#docs" class="w-full sm:w-auto px-5 py-3 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition min-h-[44px] inline-flex items-center justify-center">Read Quickstart</a>
+  </div>
+</div>`
+  },
+
+  file_upload_dropzone: {
+    name: 'Drag-and-Drop File Upload Zone with Progress Tracker',
+    description: 'Accessible file dropzone with accepted format pills, file size limits, and animated upload progress card.',
+    ux_guidelines: [
+      'Explicitly state allowed MIME types and max upload file size.',
+      'Provide visual feedback when dragging over the container.',
+      'Show progress bar with numerical percentage during active transfer.'
+    ],
+    html_tailwind: `<div class="w-full max-w-2xl mx-auto space-y-4">
+  <div class="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-indigo-500 dark:hover:border-indigo-500 rounded-3xl p-8 text-center bg-slate-50/50 dark:bg-slate-900/50 transition cursor-pointer">
+    <div class="w-12 h-12 mx-auto rounded-2xl bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mb-4">
+      <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+    </div>
+    <div class="text-sm font-semibold text-slate-900 dark:text-white">
+      <span>Drop files to upload, or </span>
+      <span class="text-indigo-600 dark:text-indigo-400 underline">browse</span>
+    </div>
+    <p class="text-xs text-slate-400 mt-1">Supports SSL certificates, backup TAR.GZ, or SQL dumps up to 500 MB.</p>
+  </div>
+
+  <!-- Upload Progress Card -->
+  <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm flex items-center gap-4">
+    <div class="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center font-bold text-xs shrink-0">SQL</div>
+    <div class="flex-1 min-w-0">
+      <div class="flex justify-between text-xs font-semibold mb-1">
+        <span class="truncate text-slate-900 dark:text-white">database_backup_production.sql.gz</span>
+        <span class="text-indigo-600 dark:text-indigo-400">74%</span>
+      </div>
+      <div class="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
+        <div class="bg-indigo-600 h-1.5 rounded-full transition-all duration-300" style="width: 74%"></div>
+      </div>
+      <div class="flex justify-between text-[11px] text-slate-400 mt-1">
+        <span>142 MB of 192 MB</span>
+        <span>24s remaining</span>
+      </div>
+    </div>
+  </div>
+</div>`
+  },
+
+  stepper_wizard: {
+    name: 'Multi-Step Cloud Provisioning Stepper Wizard',
+    description: '4-step guided deployment stepper with completed checkmarks, active glowing ring, and action controls.',
+    ux_guidelines: [
+      'Display step numbers and clear labels for orientation.',
+      'Disable next step button until form validation passes.',
+      'Allow clicking completed previous steps to navigate back safely.'
+    ],
+    html_tailwind: `<div class="w-full max-w-4xl mx-auto space-y-8">
+  <!-- Stepper Indicator -->
+  <div class="flex items-center justify-between w-full">
+    <!-- Step 1: Completed -->
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold text-sm shadow-sm">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+      </div>
+      <div class="hidden sm:block">
+        <div class="text-xs text-slate-400 font-semibold uppercase">Step 1</div>
+        <div class="text-sm font-bold text-slate-900 dark:text-white">Choose Plan</div>
+      </div>
+    </div>
+    <div class="flex-1 h-0.5 mx-4 bg-emerald-500"></div>
+
+    <!-- Step 2: Active -->
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-sm ring-4 ring-indigo-100 dark:ring-indigo-950/60 shadow">2</div>
+      <div class="hidden sm:block">
+        <div class="text-xs text-indigo-600 dark:text-indigo-400 font-semibold uppercase">Step 2</div>
+        <div class="text-sm font-bold text-slate-900 dark:text-white">Select Region</div>
+      </div>
+    </div>
+    <div class="flex-1 h-0.5 mx-4 bg-slate-200 dark:bg-slate-800"></div>
+
+    <!-- Step 3: Pending -->
+    <div class="flex items-center gap-3 opacity-60">
+      <div class="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 flex items-center justify-center font-bold text-sm">3</div>
+      <div class="hidden sm:block">
+        <div class="text-xs text-slate-400 font-semibold uppercase">Step 3</div>
+        <div class="text-sm font-semibold text-slate-500">Security & SSH</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Wizard Content Container -->
+  <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 shadow-sm">
+    <h3 class="text-xl font-bold text-slate-900 dark:text-white mb-2">Select Cloud Datacenter Location</h3>
+    <p class="text-sm text-slate-500 mb-6">Choose the region closest to your visitors for lowest ping and latency on {{BRAND_NAME}}.</p>
+    
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div class="p-5 rounded-2xl border-2 border-indigo-600 bg-indigo-50/20 dark:bg-indigo-950/20 cursor-pointer">
+        <span class="text-xs font-bold text-indigo-600 dark:text-indigo-400 uppercase">Recommended</span>
+        <div class="text-base font-bold text-slate-900 dark:text-white mt-1">Dhaka, Bangladesh</div>
+        <div class="text-xs text-slate-500 mt-1">Latency: ~4ms</div>
+      </div>
+      <div class="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-slate-300 cursor-pointer">
+        <span class="text-xs font-semibold text-slate-400 uppercase">Asia-Pacific</span>
+        <div class="text-base font-bold text-slate-900 dark:text-white mt-1">Singapore</div>
+        <div class="text-xs text-slate-500 mt-1">Latency: ~32ms</div>
+      </div>
+      <div class="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-slate-300 cursor-pointer">
+        <span class="text-xs font-semibold text-slate-400 uppercase">Europe</span>
+        <div class="text-base font-bold text-slate-900 dark:text-white mt-1">Frankfurt, Germany</div>
+        <div class="text-xs text-slate-500 mt-1">Latency: ~120ms</div>
+      </div>
+    </div>
+
+    <div class="mt-8 pt-6 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center">
+      <button class="px-5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-sm hover:bg-slate-50 dark:hover:bg-slate-800 min-h-[44px]">Back</button>
+      <button class="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow transition min-h-[44px]">Continue to SSH Keys</button>
+    </div>
+  </div>
+</div>`
+  },
+
+  two_factor_auth_form: {
+    name: 'Secure Two-Factor Authentication (2FA) OTP Verification',
+    description: '6-digit split verification code form with countdown resend timer and backup recovery link.',
+    ux_guidelines: [
+      'Use pattern="[0-9]*" and inputmode="numeric" for mobile numeric keyboard.',
+      'Auto-focus first digit and support pasting complete 6-digit codes.',
+      'Provide fallback authentication option if phone/authenticator is lost.'
+    ],
+    html_tailwind: `<div class="w-full max-w-md mx-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 shadow-xl text-center">
+  <div class="w-14 h-14 mx-auto rounded-2xl bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mb-6">
+    <svg class="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+  </div>
+  <h2 class="text-2xl font-bold text-slate-900 dark:text-white">Two-Factor Authentication</h2>
+  <p class="text-sm text-slate-500 mt-2">Enter the 6-digit verification code sent to your authenticator app for {{BRAND_NAME}}.</p>
+
+  <form class="mt-8 space-y-6">
+    <!-- 6-digit OTP Inputs -->
+    <div class="flex justify-center gap-2 sm:gap-3">
+      <input type="text" maxlength="1" pattern="[0-9]*" inputmode="numeric" class="w-12 h-14 text-center text-2xl font-extrabold rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" aria-label="Digit 1" autofocus />
+      <input type="text" maxlength="1" pattern="[0-9]*" inputmode="numeric" class="w-12 h-14 text-center text-2xl font-extrabold rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" aria-label="Digit 2" />
+      <input type="text" maxlength="1" pattern="[0-9]*" inputmode="numeric" class="w-12 h-14 text-center text-2xl font-extrabold rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" aria-label="Digit 3" />
+      <input type="text" maxlength="1" pattern="[0-9]*" inputmode="numeric" class="w-12 h-14 text-center text-2xl font-extrabold rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" aria-label="Digit 4" />
+      <input type="text" maxlength="1" pattern="[0-9]*" inputmode="numeric" class="w-12 h-14 text-center text-2xl font-extrabold rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" aria-label="Digit 5" />
+      <input type="text" maxlength="1" pattern="[0-9]*" inputmode="numeric" class="w-12 h-14 text-center text-2xl font-extrabold rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" aria-label="Digit 6" />
+    </div>
+
+    <button type="submit" class="w-full py-3.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-lg shadow-indigo-600/25 transition min-h-[44px]">Verify & Sign In</button>
+  </form>
+
+  <div class="mt-6 flex flex-col gap-2 text-xs text-slate-500">
+    <div>Didn't receive code? <button class="text-indigo-600 dark:text-indigo-400 font-semibold hover:underline">Resend in 42s</button></div>
+    <a href="#recovery" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 mt-2">Use emergency recovery code</a>
+  </div>
+</div>`
+  },
+
+  status_page_incident: {
+    name: 'Infrastructure Uptime & Operational Incident Status',
+    description: 'Public status page with operational health banner, 90-day uptime bars, and incident notice timeline.',
+    ux_guidelines: [
+      'Use green (#10B981) for operational, amber for partial degradation, and red for major outage.',
+      'Show 90 daily uptime bars with subtle gap and hover tooltips.',
+      'Provide subscribe to updates button for mission-critical notifications.'
+    ],
+    html_tailwind: `<div class="max-w-4xl mx-auto w-full space-y-8">
+  <!-- Operational Banner -->
+  <div class="p-6 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-3.5 h-3.5 rounded-full bg-emerald-500 animate-pulse"></div>
+      <h2 class="text-lg font-bold text-emerald-950 dark:text-emerald-200">All {{BRAND_NAME}} Systems Operational</h2>
+    </div>
+    <span class="text-xs font-semibold text-emerald-800 dark:text-emerald-400">Refreshed 1m ago</span>
+  </div>
+
+  <!-- Uptime Bars -->
+  <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
+    <div class="flex justify-between items-center mb-4">
+      <h3 class="text-sm font-bold text-slate-900 dark:text-white">API & Edge DNS Gateway</h3>
+      <span class="text-xs font-semibold text-emerald-600 dark:text-emerald-400">99.99% Uptime</span>
+    </div>
+    <div class="grid grid-cols-45 sm:grid-cols-90 gap-1 h-8 items-end">
+      <!-- 90 bars simulation -->
+      <div class="bg-emerald-500 h-full rounded-sm" title="Day 1: 100%"></div>
+      <div class="bg-emerald-500 h-full rounded-sm" title="Day 2: 100%"></div>
+      <div class="bg-emerald-500 h-full rounded-sm" title="Day 3: 100%"></div>
+      <div class="bg-emerald-500 h-full rounded-sm" title="Day 4: 100%"></div>
+      <div class="bg-emerald-500 h-full rounded-sm" title="Day 5: 100%"></div>
+      <div class="bg-amber-400 h-4/5 rounded-sm" title="Day 6: 99.8% Minor Latency"></div>
+      <div class="bg-emerald-500 h-full rounded-sm" title="Day 7: 100%"></div>
+    </div>
+    <div class="flex justify-between text-[11px] text-slate-400 mt-2">
+      <span>90 days ago</span>
+      <span>Today</span>
+    </div>
+  </div>
+</div>`
+  },
+
+  domain_search_box: {
+    name: 'High-Converting Cloud Domain Registrar Search Bar',
+    description: 'Domain availability search bar with instant TLD pricing badges and search execution.',
+    ux_guidelines: [
+      'Position search CTA inside input on desktop for sleek alignment.',
+      'Show popular TLD prices directly underneath to stimulate impulse searches.',
+      'Highlight Bangladesh local ccTLD (.com.bd / .bd) alongside international TLDs.'
+    ],
+    html_tailwind: `<div class="max-w-3xl mx-auto w-full text-center py-10 px-4">
+  <h2 class="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">Find your ideal domain name</h2>
+  <p class="mt-2 text-sm text-slate-600 dark:text-slate-400">Instant registration with free DNS management, WHOIS privacy, and SSL on {{BRAND_NAME}}.</p>
+
+  <form class="mt-8 relative max-w-2xl mx-auto">
+    <div class="flex flex-col sm:flex-row items-center gap-2 p-1.5 rounded-2xl bg-white dark:bg-slate-900 border-2 border-indigo-600 shadow-xl">
+      <div class="flex-1 flex items-center w-full px-3">
+        <svg class="w-5 h-5 text-slate-400 mr-2 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        <input type="text" placeholder="yourbusiness.com" class="w-full py-2 bg-transparent text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none text-base font-medium min-h-[44px]" aria-label="Domain search" />
+      </div>
+      <button type="submit" class="w-full sm:w-auto px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow transition min-h-[44px]">Search Domain</button>
+    </div>
+  </form>
+
+  <div class="mt-6 flex flex-wrap items-center justify-center gap-4 text-xs font-medium text-slate-600 dark:text-slate-400">
+    <span class="font-bold text-slate-900 dark:text-white">.com <span class="text-indigo-600 dark:text-indigo-400">{{CURRENCY_SYMBOL}}10.99</span></span>
+    <span class="text-slate-300">&bull;</span>
+    <span class="font-bold text-slate-900 dark:text-white">.com.bd <span class="text-indigo-600 dark:text-indigo-400">{{CURRENCY_SYMBOL}}12.50</span></span>
+    <span class="text-slate-300">&bull;</span>
+    <span class="font-bold text-slate-900 dark:text-white">.net <span class="text-indigo-600 dark:text-indigo-400">{{CURRENCY_SYMBOL}}12.99</span></span>
+    <span class="text-slate-300">&bull;</span>
+    <span class="font-bold text-slate-900 dark:text-white">.xyz <span class="text-indigo-600 dark:text-indigo-400">{{CURRENCY_SYMBOL}}1.99</span></span>
+  </div>
+</div>`
   }
 };
 
@@ -655,11 +1262,17 @@ export function getPattern(patternKey, options = {}) {
   const brandName = options.brand_name || 'JoypurHost Cloud';
   const currencySymbol = options.currency_symbol || '$';
   const targetFramework = options.framework || 'html_tailwind';
+  const colorScheme = options.color_scheme || 'indigo';
 
   // Dynamic token replacement
   let html = pattern.html_tailwind;
   html = html.replace(/\{\{BRAND_NAME\}\}/g, brandName);
   html = html.replace(/\{\{CURRENCY_SYMBOL\}\}/g, currencySymbol);
+
+  // Dynamic color palette remapping
+  if (colorScheme && colorScheme !== 'indigo') {
+    html = ColorEngine.remapTailwindPalette(html, colorScheme, 'indigo');
+  }
 
   // Framework conversion if requested
   const converted = ComponentConverter.convert(html, targetFramework, {
@@ -674,6 +1287,7 @@ export function getPattern(patternKey, options = {}) {
     framework: targetFramework,
     brand_name: brandName,
     currency_symbol: currencySymbol,
+    color_scheme: colorScheme,
     code: converted.converted_code,
     conversion_notes: converted.notes
   };

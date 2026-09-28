@@ -201,6 +201,110 @@ export class AuditHeuristics {
       });
     }
 
+    // --- 13. A11Y-HEADING-ORDER: Heading Hierarchy Jump (WCAG 2.2 SC 1.3.1) ---
+    if (/<h1\b[^>]*>[\s\S]*?<\/h1>/i.test(codeSnippet) && /<h[3-6]\b[^>]*>/i.test(codeSnippet) && !/<h2\b[^>]*>/i.test(codeSnippet)) {
+      score -= 10;
+      findings.push({
+        rule_id: 'A11Y-HEADING-ORDER',
+        category: 'Accessibility',
+        severity: 'MEDIUM',
+        issue: 'Skipped heading hierarchy level detected (<h1> followed directly by <h3>-<h6> without an <h2>).',
+        recommendation: 'Maintain sequential heading levels (h1 -> h2 -> h3) to ensure screen reader navigation hierarchy.'
+      });
+      // Auto-fix: Convert h3 to h2 if no h2 present
+      fixedCode = fixedCode.replace(/<h3\b([^>]*)>([\s\S]*?)<\/h3>/i, '<h2$1>$2</h2>');
+    }
+
+    // --- 14. A11Y-ICON-BUTTON-NAME: Icon-Only Button Lacks Accessible Name (WCAG 2.2 SC 4.1.2) ---
+    const iconButtonsWithoutLabel = codeSnippet.match(/<button\b(?![^>]*\b(aria-label|aria-labelledby)=)[^>]*>\s*<svg\b[\s\S]*?<\/svg>\s*<\/button>/gi);
+    if (iconButtonsWithoutLabel) {
+      score -= 10;
+      findings.push({
+        rule_id: 'A11Y-ICON-BUTTON-NAME',
+        category: 'Accessibility',
+        severity: 'HIGH',
+        issue: `${iconButtonsWithoutLabel.length} icon-only button(s) detected without aria-label or accessible text.`,
+        recommendation: 'Add aria-label="..." or an inner <span class="sr-only">Description</span> on all icon-only buttons.'
+      });
+      // Auto-fix: Inject aria-label="Action"
+      fixedCode = fixedCode.replace(/(<button\b(?![^>]*\b(?:aria-label|aria-labelledby)=)[^>]*>)(\s*<svg\b)/gi, '$1<span class="sr-only">Action</span>$2');
+    }
+
+    // --- 15. UX-MOBILE-INPUT-MODE: Missing Mobile Input Modes for Numeric/Email (WCAG 2.2 SC 1.3.5) ---
+    if (/<input\b[^>]*name="(otp|code|pin|phone|mobile|amount)"(?![^>]*\binputmode=)[^>]*>/i.test(codeSnippet)) {
+      score -= 5;
+      findings.push({
+        rule_id: 'UX-MOBILE-INPUT-MODE',
+        category: 'Mobile UX',
+        severity: 'MEDIUM',
+        issue: 'Numeric/phone input detected without inputmode="numeric" or inputmode="tel".',
+        recommendation: 'Add inputmode="numeric" or inputmode="tel" to trigger the optimized virtual keyboard on mobile devices.'
+      });
+      fixedCode = fixedCode.replace(/(<input\b[^>]*name="(?:otp|code|pin|phone|mobile|amount)")/gi, '$1 inputmode="numeric"');
+    }
+
+    // --- 16. UX-REDUCED-MOTION: Unrestrained Animation Without Reduced Motion Variant (WCAG 2.2 SC 2.3.3) ---
+    if (/\b(animate-spin|animate-ping|animate-pulse|animate-bounce)\b/i.test(codeSnippet) && !/\bmotion-reduce:/i.test(codeSnippet)) {
+      score -= 5;
+      findings.push({
+        rule_id: 'UX-REDUCED-MOTION',
+        category: 'Accessibility',
+        severity: 'LOW',
+        issue: 'CSS keyframe animation detected without motion-reduce: utility alternative for vestibular sensitivity.',
+        recommendation: 'Provide motion-reduce:animate-none or motion-safe: prefix to honor users with reduced motion preferences.'
+      });
+      fixedCode = fixedCode.replace(/\b(animate-(?:spin|ping|pulse|bounce))\b/g, '$1 motion-reduce:animate-none');
+    }
+
+    // --- 17. A11Y-COLOR-ALONE: Status Indicator Using Color Alone (WCAG 2.2 SC 1.4.1) ---
+    if (/<span\b[^>]*class="[^"]*\b(bg-emerald-500|bg-red-500|bg-green-500|bg-rose-500)\b[^"]*"[^>]*>\s*<\/span>/i.test(codeSnippet) && !codeSnippet.includes('aria-label') && !codeSnippet.includes('sr-only')) {
+      score -= 5;
+      findings.push({
+        rule_id: 'A11Y-COLOR-ALONE',
+        category: 'Accessibility',
+        severity: 'MEDIUM',
+        issue: 'Color-alone status dot indicator detected without accompanying text or screen-reader label.',
+        recommendation: 'Include a <span class="sr-only">Status text</span> or an aria-label to convey status non-visually.'
+      });
+    }
+
+    // --- 18. A11Y-TABLE-ACCESSIBILITY: Table Missing TH Header Scope (WCAG 2.2 SC 1.3.1) ---
+    if (/<table\b/i.test(codeSnippet) && /<th\b(?![^>]*\bscope=)[^>]*>/i.test(codeSnippet)) {
+      score -= 5;
+      findings.push({
+        rule_id: 'A11Y-TABLE-ACCESSIBILITY',
+        category: 'Accessibility',
+        severity: 'MEDIUM',
+        issue: 'Data table <th> elements missing explicit scope="col" or scope="row" attributes.',
+        recommendation: 'Add scope="col" to table column header cells to correctly associate data with column headers.'
+      });
+      fixedCode = fixedCode.replace(/<th\b(?![^>]*\bscope=)([^>]*)>/gi, '<th scope="col"$1>');
+    }
+
+    // --- 19. UX-TARGET-SPACING: Buttons In Close Proximity Lacking Separation (WCAG 2.2 SC 2.5.8) ---
+    if (/<button\b[\s\S]*?<\/button>\s*<button\b/i.test(codeSnippet) && !/\b(gap-|space-x-|mr-|ml-)\b/i.test(codeSnippet)) {
+      score -= 5;
+      findings.push({
+        rule_id: 'UX-TARGET-SPACING',
+        category: 'Mobile UX',
+        severity: 'LOW',
+        issue: 'Interactive buttons placed in immediate succession without flex gap or spacing.',
+        recommendation: 'Wrap adjacent buttons in a container with gap-2 or gap-3 to prevent accidental tap errors.'
+      });
+    }
+
+    // --- 20. PERF-FONT-SMOOTHING: Missing Antialiased Utility ---
+    if (!/\bantialiased\b/i.test(codeSnippet) && (lower.includes('font-') || lower.includes('text-'))) {
+      findings.push({
+        rule_id: 'PERF-FONT-SMOOTHING',
+        category: 'Visual Polish',
+        severity: 'LOW',
+        issue: 'Typography container missing antialiased utility class for optimal subpixel font smoothing.',
+        recommendation: 'Add the antialiased class to parent layout container for consistent high-DPI font rendering.'
+      });
+      // Do not deduct score for low-severity polish, but offer finding
+    }
+
     // Normalize final score bounds
     score = Math.max(0, Math.min(100, score));
 

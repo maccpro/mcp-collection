@@ -99,9 +99,18 @@ export class ProjectDetector {
         profile.component_style = 'blade_components';
       }
 
-      if (allComposerDeps['filament/filament']) {
+      // Check Filament Admin
+      if (allComposerDeps['filament/filament'] || fs.existsSync(path.join(resolvedDir, 'app', 'Filament'))) {
         profile.detected_libraries.push('filament');
+        profile.framework_display += ' (Filament Admin)';
       }
+
+      // Check Multi-Tenancy
+      if (allComposerDeps['stancl/tenancy'] || allComposerDeps['spatie/laravel-multitenancy'] || fs.existsSync(path.join(resolvedDir, 'routes', 'tenant.php')) || fs.existsSync(path.join(resolvedDir, 'database', 'migrations', 'tenant'))) {
+        profile.is_multi_tenant = true;
+        profile.detected_libraries.push('multi-tenancy');
+      }
+
       if (allComposerDeps['blade-ui-kit/blade-heroicons']) {
         profile.icon_set = 'blade-heroicons';
       }
