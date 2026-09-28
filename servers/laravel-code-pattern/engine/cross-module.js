@@ -1,6 +1,8 @@
 /**
- * Cross-Module Boundary Isolation Checker
- * Enforces strict boundaries between modules in modular Laravel apps (app/Modules/*).
+ * @file cross-module.js
+ * @description Cross-Module Boundary Isolation Checker.
+ * Enforces strict boundaries between modules in modular Laravel apps (app/Modules/* or Modules/*).
+ * Prevents direct coupling to internal Models, Repositories, Actions, and Services across modules.
  */
 
 export class CrossModuleChecker {
@@ -20,8 +22,8 @@ export class CrossModuleChecker {
     const ruleSeverity = config.architecture?.rules?.cross_module_internal_dependency || 'ERROR';
 
     for (const imp of parsed.imports) {
-      // Check if import targets another module: App\Modules\<OtherModule>\...
-      const otherModuleMatch = imp.classPath.match(/^App\\Modules\\([^\\]+)\\(.+)$/i);
+      // Check if import targets another module: App\Modules\<OtherModule>\... or Modules\<OtherModule>\...
+      const otherModuleMatch = imp.classPath.match(/^(?:App\\Modules|Modules)\\([^\\]+)\\(.+)$/i);
       if (!otherModuleMatch) {
         continue;
       }
@@ -44,6 +46,7 @@ export class CrossModuleChecker {
           fileName: parsed.fileName,
           line: imp.line,
           rule: 'cross_module_internal_dependency',
+          category: 'Relational',
           severity: ruleSeverity,
           layer: parsed.layer,
           snippet: imp.statement,

@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
- * Optional External Tools Bridge (PHPStan, Laravel Pint, Pest)
- * Runs tools only when requested and when local binaries exist.
+ * Optional External Tools Bridge (PHPStan/Larastan, Laravel Pint, Pest)
+ * Runs tools only when requested and when local binaries exist in vendor/bin.
  */
 export class ExternalRunner {
   /**
@@ -18,7 +18,7 @@ export class ExternalRunner {
     const checks = config.externalChecks || {};
     const results = {};
 
-    // 1. PHPStan
+    // 1. PHPStan / Larastan
     if (checks.phpstan) {
       results.phpstan = this.runPHPStan(targetFiles, cwd);
     }
@@ -59,11 +59,28 @@ export class ExternalRunner {
       const filesArg = files.length > 0 ? files.map(f => `"${f}"`).join(' ') : '';
       const cmd = `"${bin}" analyse ${filesArg} --error-format=json --no-progress`;
       const stdout = execSync(cmd, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-      return { status: 'PASS', output: stdout };
+      
+      let parsed = null;
+      try {
+        parsed = JSON.parse(stdout);
+      } catch {}
+
+      return {
+        status: 'PASS',
+        structured: parsed,
+        raw_output: parsed ? undefined : stdout
+      };
     } catch (err) {
+      const out = err.stdout ? err.stdout.toString() : err.message;
+      let parsed = null;
+      try {
+        parsed = JSON.parse(out);
+      } catch {}
+
       return {
         status: 'FAIL',
-        output: err.stdout ? err.stdout.toString() : err.message
+        structured: parsed,
+        output: parsed ? undefined : out
       };
     }
   }

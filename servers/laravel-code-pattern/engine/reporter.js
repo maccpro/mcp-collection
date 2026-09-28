@@ -1,5 +1,6 @@
 /**
- * Main Agent Reporting Protocol & MiMo Remediation Payload Generator
+ * @file reporter.js
+ * @description Main Agent Reporting Protocol & MiMo Remediation Payload Generator.
  * Formats structured analysis output specifically for Antigravity orchestration and MiMo loops.
  */
 
@@ -14,11 +15,13 @@ export class Reporter {
     violations = [],
     scanDurationMs = 0,
     config = {},
-    options = {}
+    options = {},
+    relationalGraph = null
   }) {
     const blockingSeverities = config.policy?.blocking || ['CRITICAL', 'ERROR'];
     const failOnWarnings = options.fail_on_warnings ?? config.policy?.failOnWarnings ?? false;
 
+    const criticalViolations = violations.filter(v => v.severity === 'CRITICAL');
     const blockingViolations = violations.filter(v => blockingSeverities.includes(v.severity));
     const warningViolations = violations.filter(v => !blockingSeverities.includes(v.severity));
 
@@ -33,16 +36,29 @@ export class Reporter {
       layerDistribution[layer] = (layerDistribution[layer] || 0) + 1;
     }
 
+    // Health Score calculation (starts at 100, drops per violation)
+    let penalty = (criticalViolations.length * 25) + (blockingViolations.length * 15) + (warningViolations.length * 5);
+    const healthScore = Math.max(0, Math.min(100, 100 - penalty));
+
+    // Relational summary
+    const relationalSummary = relationalGraph ? {
+      nodes_count: relationalGraph.nodes.size,
+      edges_count: relationalGraph.edges.length
+    } : { nodes_count: filesAnalyzed.length, edges_count: 0 };
+
     // Generate Markdown summary for Main Agent & User review
     const executiveSummaryMarkdown = this.buildExecutiveSummaryMarkdown({
       status,
       gateDecision,
+      healthScore,
       filesCount: filesAnalyzed.length,
       blockingCount: blockingViolations.length,
       warningCount: warningViolations.length,
+      criticalCount: criticalViolations.length,
       scanDurationMs,
       blockingViolations,
-      warningViolations
+      warningViolations,
+      relationalSummary
     });
 
     // Generate focused remediation payload for MiMo
@@ -56,15 +72,19 @@ export class Reporter {
     return {
       gate_decision: gateDecision,
       status,
+      health_score: healthScore,
       summary: isGatePassed
-        ? `Quality Gate PASSED cleanly (${filesAnalyzed.length} file(s) scanned, 0 blocking issues).`
-        : `Quality Gate FAILED: ${blockingViolations.length} blocking violation(s) detected.`,
+        ? `Quality Gate PASSED cleanly (${filesAnalyzed.length} file(s) scanned, 0 blocking issues, Health: ${healthScore}%).`
+        : `Quality Gate FAILED: ${blockingViolations.length} blocking violation(s) detected (Health: ${healthScore}%).`,
       telemetry: {
         files_analyzed: filesAnalyzed.length,
         scan_duration_ms: scanDurationMs,
+        health_score: healthScore,
+        critical_count: criticalViolations.length,
         blocking_count: blockingViolations.length,
         warning_count: warningViolations.length,
-        layer_distribution: layerDistribution
+        layer_distribution: layerDistribution,
+        relational_summary: relationalSummary
       },
       executive_summary_markdown: executiveSummaryMarkdown,
       violations: violations.map(v => ({
@@ -72,6 +92,7 @@ export class Reporter {
         file: v.file,
         line: v.line,
         rule: v.rule,
+        category: v.category || 'General',
         severity: v.severity,
         layer: v.layer,
         snippet: v.snippet,
@@ -88,17 +109,24 @@ export class Reporter {
   static buildExecutiveSummaryMarkdown({
     status,
     gateDecision,
+    healthScore,
     filesCount,
     blockingCount,
     warningCount,
+    criticalCount,
     scanDurationMs,
     blockingViolations,
-    warningViolations
+    warningViolations,
+    relationalSummary
   }) {
     const icon = status === 'PASS' ? '✅' : '❌';
-    let md = `### ${icon} Architecture Quality Gate: **${status}**\n\n`;
+    let md = `### ${icon} Architecture Quality Gate: **${status}** (Health: **${healthScore}%**)\n\n`;
     md += `- **Gate Decision:** \`${gateDecision}\`\n`;
     md += `- **Files Checked:** ${filesCount} (Scanned in ${scanDurationMs}ms)\n`;
+    md += `- **Relational Graph:** ${relationalSummary.nodes_count} nodes, ${relationalSummary.edges_count} edges\n`;
+    if (criticalCount > 0) {
+      md += `- **Critical Security Hazards:** ${criticalCount} 🚨\n`;
+    }
     md += `- **Blocking Violations:** ${blockingCount}\n`;
     md += `- **Non-Blocking Warnings:** ${warningCount}\n\n`;
 
@@ -127,14 +155,14 @@ export class Reporter {
     }
 
     if (status === 'PASS') {
-      md += `> [!NOTE]\n> All analyzed files strictly adhere to the Canonical Architecture Flow:\n> \`Controller -> FormRequest -> DTO -> Action -> optional Service -> Repository -> Model -> Database\`\n`;
+      md += `> [!NOTE]\n> All analyzed files strictly adhere to the Canonical Architecture Flow:\n> \`Controller -> FormRequest -> DTO -> Action -> optional Service -> RepositoryInterface -> Repository -> Model -> Database\`\n`;
     }
 
     return md;
   }
 
   /**
-   * Build ready-to-dispatch prompt for MiMo
+   * Build ready-to-dispatch high-fidelity prompt for MiMo
    */
   static buildMiMoRemediationPayload({
     isGatePassed,
@@ -168,11 +196,20 @@ export class Reporter {
       prompt += `   Required Refactoring: ${v.fix}\n\n`;
     });
 
-    prompt += `INSTRUCTIONS FOR MIMO:\n`;
-    prompt += `- Do NOT put database queries or Model calls in Controllers.\n`;
-    prompt += `- Do NOT inject HTTP Request objects into Repositories.\n`;
-    prompt += `- Do NOT bypass module boundaries by importing another module's internal classes.\n`;
-    prompt += `- Output only the corrected, production-ready code for the affected classes.\n`;
+    prompt += `INSTRUCTIONS & ARCHITECTURAL SCAFFOLDING FOR MIMO:\n`;
+    prompt += `1. Controller Refactoring:\n`;
+    prompt += `   - Remove direct Model queries and raw DB queries from Controller.\n`;
+    prompt += `   - Controller must only: (a) validate input via FormRequest, (b) instantiate DTO, (c) call Action, (d) return response/resource.\n`;
+    prompt += `2. Action & DTO Scaffolding:\n`;
+    prompt += `   - Create single-purpose Action class with public function __invoke(SomeDTO $dto).\n`;
+    prompt += `   - Action must inject RepositoryInterface (NOT concrete repository or HTTP request).\n`;
+    prompt += `3. Security & SQL Injection Remediation:\n`;
+    prompt += `   - For raw SQL (DB::raw, whereRaw), ALWAYS use query bindings: DB::raw("... ?", [$var]).\n`;
+    prompt += `   - Never pass raw $request->all() to Model::create() or update(); use $request->validated() or DTO.\n`;
+    prompt += `4. Module Isolation & Multi-Tenancy:\n`;
+    prompt += `   - Do NOT bypass module boundaries by importing another module's internal classes.\n`;
+    prompt += `   - Keep tenant migrations inside database/migrations/tenant/.\n`;
+    prompt += `Output only the corrected, production-ready code for the affected classes.\n`;
 
     return {
       target_files: targetFiles,

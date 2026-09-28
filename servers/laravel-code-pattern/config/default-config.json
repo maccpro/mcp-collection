@@ -1,6 +1,6 @@
 {
   "name": "laravel-code-pattern-mcp",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "policy": {
     "blocking": [
       "CRITICAL",
@@ -11,8 +11,8 @@
       "INFO"
     ],
     "failOnWarnings": false,
-    "maxChangedFiles": 80,
-    "maxFileBytes": 500000
+    "maxChangedFiles": 100,
+    "maxFileBytes": 1000000
   },
   "architecture": {
     "flow": [
@@ -31,24 +31,119 @@
       "controller_direct_model": "ERROR",
       "controller_direct_db": "ERROR",
       "controller_business_logic": "WARNING",
+      "controller_unauthorized_mutation": "ERROR",
+      "sql_injection_raw_exposure": "CRITICAL",
+      "mass_assignment_unguarded": "WARNING",
       "form_request_persistence": "ERROR",
       "form_request_business_logic": "WARNING",
       "dto_persistence": "ERROR",
       "repository_http_dependency": "ERROR",
       "repository_business_logic": "WARNING",
+      "repository_missing_interface": "WARNING",
       "action_too_large": "WARNING",
+      "action_http_dependency": "ERROR",
       "service_too_large": "WARNING",
-      "cross_module_internal_dependency": "ERROR"
+      "cross_module_internal_dependency": "ERROR",
+      "tenant_migration_misplacement": "ERROR",
+      "tenant_unscoped_query": "ERROR",
+      "n_plus_one_loop_query": "WARNING",
+      "unbounded_transaction_boundary": "WARNING",
+      "circular_dependency_detected": "ERROR"
     }
   },
   "paths": {
-    "controllers": "app/Modules/*/Http/Controllers",
-    "requests": "app/Modules/*/Http/Requests",
-    "dtos": "app/Modules/*/DTOs",
-    "actions": "app/Modules/*/Actions",
-    "services": "app/Modules/*/Services",
-    "repositories": "app/Modules/*/Repositories",
-    "models": "app/Modules/*/Models"
+    "controllers": [
+      "app/Modules/*/Http/Controllers",
+      "app/Http/Controllers",
+      "src/*/Presentation/Http/Controllers",
+      "Modules/*/Http/Controllers"
+    ],
+    "requests": [
+      "app/Modules/*/Http/Requests",
+      "app/Http/Requests",
+      "src/*/Presentation/Http/Requests",
+      "Modules/*/Http/Requests"
+    ],
+    "dtos": [
+      "app/Modules/*/DTOs",
+      "app/DTOs",
+      "app/DataTransferObjects",
+      "src/*/Application/DTOs",
+      "Modules/*/DTOs"
+    ],
+    "actions": [
+      "app/Modules/*/Actions",
+      "app/Actions",
+      "src/*/Application/Actions",
+      "Modules/*/Actions"
+    ],
+    "services": [
+      "app/Modules/*/Services",
+      "app/Services",
+      "src/*/Domain/Services",
+      "Modules/*/Services"
+    ],
+    "repositories": [
+      "app/Modules/*/Repositories",
+      "app/Repositories",
+      "src/*/Infrastructure/Repositories",
+      "Modules/*/Repositories"
+    ],
+    "models": [
+      "app/Modules/*/Models",
+      "app/Models",
+      "src/*/Domain/Entities",
+      "Modules/*/Models"
+    ],
+    "policies": [
+      "app/Modules/*/Policies",
+      "app/Policies",
+      "Modules/*/Policies"
+    ],
+    "resources": [
+      "app/Modules/*/Http/Resources",
+      "app/Http/Resources",
+      "Modules/*/Http/Resources"
+    ],
+    "migrations": {
+      "central": [
+        "database/migrations"
+      ],
+      "tenant": [
+        "database/migrations/tenant",
+        "database/migrations/tenants"
+      ]
+    }
+  },
+  "multi_tenancy": {
+    "enabled": true,
+    "detect_packages": [
+      "stancl/tenancy",
+      "spatie/laravel-multitenancy",
+      "tenancy/tenancy"
+    ],
+    "tenant_traits": [
+      "BelongsToTenant",
+      "TenantScoped",
+      "UsesTenantConnection"
+    ],
+    "tenant_migration_dirs": [
+      "database/migrations/tenant",
+      "database/migrations/tenants"
+    ],
+    "central_migration_dirs": [
+      "database/migrations"
+    ]
+  },
+  "security": {
+    "sql_injection_check": true,
+    "require_authorization_on_mutations": true,
+    "block_unguarded_mass_assignment": true
+  },
+  "relational": {
+    "enforce_repository_interface": true,
+    "detect_circular_dependencies": true,
+    "max_coupling_instability": 0.9
   },
   "externalChecks": {
     "phpstan": true,
