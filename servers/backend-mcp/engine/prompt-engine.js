@@ -1,34 +1,67 @@
 /**
  * @file prompt-engine.js
  * @description Dynamic Framework Persona & Architectural Prompt Synthesis.
- * Automatically injects framework-specific enterprise conventions, design patterns,
- * security requirements, and layer standards into LLM prompts.
+ * 
+ * Provides:
+ * - Dynamic Framework-Specific Enterprise Conventions (Laravel, NestJS, FastAPI, Express, Go, Spring Boot)
+ * - Multi-Tenancy Scoping & Isolation Mandates (stancl/tenancy, spatie, tenant migrations)
+ * - Layer Topology & Pattern Synthesis (Action-Domain, Service-Repository, Clean/Onion)
+ * - Strict Typing, Zero Duplicate Code (DRY), and Defensive Programming Mandates
+ * 
+ * Zero external dependencies: 100% Node.js standard libraries.
  */
 
 export class PromptEngine {
   /**
-   * Build targeted system prompt based on detected or provided framework and architectural layer.
-   * @param {object} profile Project profile from ProjectDetector or user options
+   * Build targeted system prompt based on detected or provided framework, architectural layer, and relational profile.
+   * @param {object} profile Project profile from ProjectDetector / RelationalArchitectureEngine
    * @param {string} layer Target architectural layer (e.g. service, controller, repository, dto, action, job)
    * @param {string} customSystemPrompt Optional custom system prompt override
    * @returns {string} Synthesized enterprise system prompt
    */
-  static buildSystemPrompt(profile, layer = 'service', customSystemPrompt = null) {
+  static buildSystemPrompt(profile = {}, layer = 'service', customSystemPrompt = null) {
     if (customSystemPrompt && customSystemPrompt.trim().length > 0) {
       return customSystemPrompt;
     }
 
     const framework = profile.framework || 'generic_backend';
     const language = profile.language || 'backend';
+    const style = profile.architectural_style || 'standard_layered';
+    const multiTenancy = profile.multi_tenancy || { enabled: false };
 
     let base = `You are a Principal Enterprise Backend Software Architect and Senior Implementation Engineer.
 Your sole mission is to write clean, secure, highly performant, production-ready ${language.toUpperCase()} application code based on industry-leading architectural standards.
 Strictly adhere to the following principles:
-- ZERO DUPLICATE CODE (DRY Principle): Extract reusable logic into dedicated services, helpers, or domain classes.
+- ZERO DUPLICATE CODE (DRY Principle): Extract reusable logic into dedicated services, helpers, traits, or domain classes.
 - DEFENSIVE PROGRAMMING: Rigorous input validation, boundary checking, and comprehensive exception handling.
 - STRICT TYPING: Use strict type declarations, typed properties, explicit parameter types, and precise return types.
 - ZERO CHATTER: Output clean, drop-in production code with clear docblocks/comments. Do NOT wrap code in unnecessary conversational pleasantries.
 `;
+
+    // Multi-tenancy mandates if project is multi-tenant
+    if (multiTenancy.enabled) {
+      base += `
+[MULTI-TENANCY & TENANT ISOLATION MANDATES]
+1. Mandatory Tenant Scoping: All database queries and operations touching tenant data must be tenant-scoped. Never bypass tenant scoping.
+2. Tenant Migrations: Standard global tables belong in database/migrations/, while tenant tables belong strictly in ${multiTenancy.tenant_migrations_path || 'database/migrations/tenant/'}.
+3. Zero Data Leaks: Verify active tenant context before executing mutations; never execute raw queries across tenant databases.
+`;
+    }
+
+    // Architectural pattern mandates
+    if (style === 'action_domain_pattern') {
+      base += `
+[ARCHITECTURE PATTERN: ACTION-DOMAIN]
+- Implement business logic as single-purpose, Invokable Action classes (e.g. app/Actions/{Domain}/{ActionName}.php with __invoke() method).
+- Controllers must remain razor-thin, only authorizing requests and delegating directly to Action classes.
+`;
+    } else if (style === 'repository_service_pattern') {
+      base += `
+[ARCHITECTURE PATTERN: REPOSITORY-SERVICE]
+- Implement business logic in dedicated Service classes (app/Services).
+- Decouple data access through dedicated Repository interfaces and implementations (app/Repositories).
+`;
+    }
 
     // Framework specific enterprise guidelines
     switch (framework) {

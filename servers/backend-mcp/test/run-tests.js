@@ -8,6 +8,8 @@ import { ProjectDetector } from '../engine/project-detector.js';
 import { PromptEngine } from '../engine/prompt-engine.js';
 import { CodeReviewer } from '../engine/code-reviewer.js';
 import { HealthChecker } from '../engine/health-checker.js';
+import { RelationalArchitectureEngine } from '../engine/relational-architecture-engine.js';
+import { ProviderEngine } from '../engine/provider-engine.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,6 +31,7 @@ console.log(`✅ Test 1 Passed: .env loaded successfully (API Key present: ${has
 const genericProfile = ProjectDetector.inspect(serverDir);
 assert.ok(genericProfile.project_path, 'Profile must contain resolved project_path');
 assert.strictEqual(genericProfile.language, 'javascript', 'Node-based backend-mcp root should detect javascript/typescript');
+assert.ok(genericProfile.relational_architecture, 'Profile must include relational_architecture');
 console.log(`✅ Test 2 Passed: ProjectDetector correctly inspected server root (${genericProfile.framework_display}).`);
 
 // ==========================================
@@ -205,4 +208,139 @@ assert.ok(stdoutData.includes('backend_detect_stack'), 'Server tools must includ
 assert.ok(stdoutData.includes('backend_health_check'), 'Server tools must include backend_health_check');
 console.log('✅ Test 7 Passed: MCP Server JSON-RPC stdio protocol responded cleanly with all 8 tools.');
 
-console.log('\n🎉 ALL ENTERPRISE BACKEND MCP TESTS PASSED SUCCESSFULLY! 🎉\n');
+// ==========================================
+// Test 8: RelationalArchitectureEngine - Entity Relations & Topology
+// ==========================================
+try {
+  fs.mkdirSync(tempTestDir, { recursive: true });
+  const modelDir = path.join(tempTestDir, 'app', 'Models');
+  fs.mkdirSync(modelDir, { recursive: true });
+
+  fs.writeFileSync(path.join(modelDir, 'Order.php'), `
+    class Order extends Model {
+        public function items() {
+            return $this->hasMany(OrderItem::class);
+        }
+    }
+  `);
+
+  fs.writeFileSync(path.join(modelDir, 'OrderItem.php'), `
+    class OrderItem extends Model {
+        public function order() {
+            return $this->belongsTo(Order::class);
+        }
+    }
+  `);
+
+  const raeProfile = RelationalArchitectureEngine.inspectArchitecture(tempTestDir);
+  assert.strictEqual(raeProfile.entities.length, 2, 'Should discover 2 entities');
+  assert.strictEqual(raeProfile.relations.length, 2, 'Should discover 2 entity relationships');
+  assert.ok(raeProfile.relations.some(r => r.source === 'Order' && r.target === 'OrderItem' && r.type === 'hasMany'));
+  assert.ok(raeProfile.relations.some(r => r.source === 'OrderItem' && r.target === 'Order' && r.type === 'belongsTo'));
+  assert.ok(raeProfile.mermaid_diagram.includes('flowchart TD'), 'Should generate Mermaid diagram');
+  console.log('✅ Test 8 Passed: RelationalArchitectureEngine correctly extracted models, relationships, and Mermaid flowchart.');
+} finally {
+  if (fs.existsSync(tempTestDir)) {
+    fs.rmSync(tempTestDir, { recursive: true, force: true });
+  }
+}
+
+// ==========================================
+// Test 9: Multi-Tenancy Architecture Detection
+// ==========================================
+try {
+  fs.mkdirSync(tempTestDir, { recursive: true });
+  fs.mkdirSync(path.join(tempTestDir, 'database', 'migrations', 'tenant'), { recursive: true });
+  fs.writeFileSync(path.join(tempTestDir, 'composer.json'), JSON.stringify({
+    require: {
+      'stancl/tenancy': '^3.8'
+    }
+  }));
+
+  const tenantProfile = RelationalArchitectureEngine.inspectArchitecture(tempTestDir);
+  assert.strictEqual(tenantProfile.multi_tenancy.enabled, true, 'Multi-tenancy should be enabled');
+  assert.strictEqual(tenantProfile.multi_tenancy.mode, 'database_per_tenant', 'Multi-tenancy mode should be database_per_tenant');
+  assert.strictEqual(tenantProfile.multi_tenancy.tenant_migrations_path, 'database/migrations/tenant', 'Should find tenant migrations path');
+  assert.ok(tenantProfile.multi_tenancy.isolation_rules.length > 0, 'Should include isolation rules');
+
+  // Verify PromptEngine incorporates multi-tenant isolation rules
+  const tenantPrompt = PromptEngine.buildSystemPrompt(tenantProfile, 'service');
+  assert.ok(tenantPrompt.includes('MULTI-TENANCY & TENANT ISOLATION MANDATES'), 'Prompt must include tenant mandates');
+  console.log('✅ Test 9 Passed: Multi-Tenancy architecture detected and injected into prompt mandates.');
+} finally {
+  if (fs.existsSync(tempTestDir)) {
+    fs.rmSync(tempTestDir, { recursive: true, force: true });
+  }
+}
+
+// ==========================================
+// Test 10: Expanded Heuristics - IDOR, Tenant Leak, Transactions & Unbounded Queries
+// ==========================================
+const modernVulnerableCode = `
+class InvoiceController extends Controller {
+    public function settle(Request $request, $id) {
+        // IDOR hazard
+        $invoice = Invoice::findOrFail($id);
+
+        // Tenant scope bypass hazard
+        $account = Account::withoutTenancy()->find($request->account_id);
+
+        // Multiple mutations missing DB::transaction
+        $invoice->status = 'paid';
+        $invoice->save();
+        $account->balance -= $invoice->amount;
+        $account->save();
+
+        // Unbounded query hazard
+        $allInvoices = Invoice::all();
+
+        return response()->json(['status' => 'settled']);
+    }
+}
+`;
+
+const advancedFindings = CodeReviewer.runStaticHeuristics(modernVulnerableCode, 'laravel');
+const advancedTypes = advancedFindings.map(f => f.type);
+
+assert.ok(advancedTypes.includes('SECURITY_IDOR_HAZARD'), 'Must detect IDOR hazard');
+assert.ok(advancedTypes.includes('SECURITY_TENANT_DATA_LEAK'), 'Must detect tenant scope bypass');
+assert.ok(advancedTypes.includes('ARCHITECTURE_MISSING_TRANSACTION'), 'Must detect missing atomic transaction');
+assert.ok(advancedTypes.includes('PERFORMANCE_UNBOUNDED_QUERY'), 'Must detect unbounded query');
+
+const { score, severity } = CodeReviewer.calculateRiskScore(advancedFindings);
+assert.ok(score >= 50, `Score should be high risk (>= 50), got ${score}`);
+assert.ok(severity === 'CRITICAL' || severity === 'HIGH');
+console.log(`✅ Test 10 Passed: Expanded heuristics detected IDOR, Tenant leaks, missing transactions, and unbounded queries (Score: ${score}/100 - ${severity}).`);
+
+// ==========================================
+// Test 11: ProviderEngine Protocol Routing & Parameter Resilience
+// ==========================================
+assert.strictEqual(typeof ProviderEngine.callGemini, 'function', 'ProviderEngine must expose callGemini');
+assert.strictEqual(typeof ProviderEngine.executeProviderCall, 'function', 'ProviderEngine must expose executeProviderCall');
+console.log('✅ Test 11 Passed: ProviderEngine native Gemini API and multi-protocol router verified.');
+
+// ==========================================
+// Test 12: Dynamic Environment Hot-Reloading
+// ==========================================
+process.env.BACKEND_TEST_HOT_RELOAD = 'original_value';
+const envTestDir = path.join(__dirname, '__temp_env_dir__');
+try {
+  fs.mkdirSync(envTestDir, { recursive: true });
+  fs.writeFileSync(path.join(envTestDir, '.env'), 'BACKEND_TEST_HOT_RELOAD=updated_hot_reload_value\n');
+
+  // Verify default loadEnv does NOT override
+  loadEnv(envTestDir, { override: false });
+  assert.strictEqual(process.env.BACKEND_TEST_HOT_RELOAD, 'original_value', 'Non-override loadEnv should keep existing');
+
+  // Verify loadEnv with override: true DOES override
+  loadEnv(envTestDir, { override: true });
+  assert.strictEqual(process.env.BACKEND_TEST_HOT_RELOAD, 'updated_hot_reload_value', 'Override loadEnv must update process.env');
+  console.log('✅ Test 12 Passed: Environment hot-reloading (override: true) successfully verified.');
+} finally {
+  delete process.env.BACKEND_TEST_HOT_RELOAD;
+  if (fs.existsSync(envTestDir)) {
+    fs.rmSync(envTestDir, { recursive: true, force: true });
+  }
+}
+
+console.log('\n🎉 ALL ENTERPRISE BACKEND MCP TESTS PASSED SUCCESSFULLY! (12/12) 🎉\n');

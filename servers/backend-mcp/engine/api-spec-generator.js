@@ -1,8 +1,14 @@
 /**
  * @file api-spec-generator.js
  * @description Enterprise OpenAPI 3.1 & Postman Specification Generator.
+ * 
  * Transforms backend controllers, route definitions, and request schemas into standardized
- * OpenAPI 3.1 (YAML/JSON) specifications or Postman v2.1 collections.
+ * OpenAPI 3.1 (YAML/JSON) specifications or Postman v2.1 collections with:
+ * - Nested relational entity models
+ * - Standard RFC 9457 Problem Details error schemas
+ * - Comprehensive pagination metadata schemas
+ * 
+ * Zero external dependencies: 100% Node.js standard libraries.
  */
 
 import { ProviderEngine } from './provider-engine.js';
@@ -23,7 +29,7 @@ export class ApiSpecGenerator {
     } else if (format === 'openapi_json') {
       formatInstructions = 'Generate a strictly valid OpenAPI 3.1 specification formatted as valid JSON.';
     } else if (format === 'postman') {
-      formatInstructions = 'Generate a strictly valid Postman Collection v2.1 schema formatted as valid JSON with variables and sample request bodies.';
+      formatInstructions = 'Generate a strictly valid Postman Collection v2.1 schema formatted as valid JSON with environment variables, auth headers, and sample request bodies.';
     }
 
     const systemPrompt = `You are an Enterprise API Design Specialist and OpenAPI 3.1 Expert.
@@ -31,10 +37,12 @@ Your task is to analyze backend source code and route definitions to generate co
 Requirements:
 1. ${formatInstructions}
 2. Define accurate HTTP methods (GET, POST, PUT, PATCH, DELETE), paths, parameters, and headers.
-3. Define requestBody schemas with field types, required fields, and examples.
-4. Define standard response codes: 200/201 (Success), 400 (Bad Request), 401 (Unauthorized), 403 (Forbidden), 422 (Validation Error), 500 (Server Error).
-5. Include BearerAuth or relevant security schemes.
-6. Output ONLY the raw spec code block (yaml or json). No conversational chatter.`;
+3. Model nested relational schemas for related resources (e.g. parent entity with children items/relations).
+4. Define standard response codes: 200/201 (Success), 400 (Bad Request), 401 (Unauthorized), 403 (Forbidden), 404 (Not Found), 422 (Validation Error), 500 (Server Error).
+5. For error responses (4xx/5xx), follow the RFC 9457 / RFC 7807 Problem Details schema (type, title, status, detail, instance, errors).
+6. Support pagination query parameters (page, per_page, cursor) and standard pagination metadata.
+7. Include BearerAuth or relevant security schemes.
+8. Output ONLY the raw spec code block (yaml or json). No conversational chatter.`;
 
     let userContent = `API Title: ${title}\nAPI Version: ${version}\n`;
     if (routesInfo) {

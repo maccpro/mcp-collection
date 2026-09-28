@@ -6,7 +6,7 @@ import path from 'node:path';
  * Reads .env file from the specified directory and cascading parent/workspace directories.
  * @param {string} dir Base directory
  */
-export function loadEnv(dir = process.cwd()) {
+export function loadEnv(dir = process.cwd(), { override = false } = {}) {
   const candidates = [
     path.join(dir, '.env'),
     path.join(dir, '..', '.env'),
@@ -42,8 +42,8 @@ export function loadEnv(dir = process.cwd()) {
         // Handle escape characters if enclosed in double quotes
         value = value.replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t');
 
-        // Populate into process.env if not already set by system or previous higher-priority file
-        if (process.env[key] === undefined) {
+        // Populate into process.env if not already set or override is requested
+        if (override || process.env[key] === undefined) {
           process.env[key] = value;
           loadedKeys.add(key);
         }

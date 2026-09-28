@@ -55,12 +55,15 @@ export class ProviderEngine {
         p.max_tokens = tokenLimit;
       }
 
-      // Handle thinking parameter
-      if (options.thinking_enabled !== undefined) {
-        p.thinking = { type: options.thinking_enabled ? 'enabled' : 'disabled' };
-      } else if (process.env.BACKEND_THINKING || process.env.MIMO_THINKING) {
-        const setting = process.env.BACKEND_THINKING || process.env.MIMO_THINKING;
-        p.thinking = { type: setting === 'disabled' ? 'disabled' : 'enabled' };
+      // Handle thinking parameter (omit for native OpenAI endpoints or when explicitly omitted)
+      const isNativeOpenAI = apiUrl.includes('api.openai.com');
+      if (!isNativeOpenAI && !options.omit_thinking) {
+        if (options.thinking_enabled !== undefined) {
+          p.thinking = { type: options.thinking_enabled ? 'enabled' : 'disabled' };
+        } else if (process.env.BACKEND_THINKING || process.env.MIMO_THINKING) {
+          const setting = process.env.BACKEND_THINKING || process.env.MIMO_THINKING;
+          p.thinking = { type: setting === 'disabled' ? 'disabled' : 'enabled' };
+        }
       }
 
       return p;
@@ -116,6 +119,22 @@ export class ProviderEngine {
           if (errorText.includes('temperature') || errorText.includes('unsupported value')) {
             omitTemperature = true;
             payload = buildPayload(useMaxCompletionTokens, true);
+            const retryRes = await fetch(apiUrl, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(payload)
+            });
+            if (retryRes.ok) {
+              const data = await retryRes.json();
+              return data.choices?.[0]?.message?.content || '';
+            }
+          }
+
+          // Parameter resilience: thinking parameter rejected by endpoint (e.g. OpenAI native)
+          if (errorText.includes('thinking') || errorText.includes('unrecognized parameter')) {
+            options.omit_thinking = true;
+            payload = buildPayload(useMaxCompletionTokens, omitTemperature);
+            delete payload.thinking;
             const retryRes = await fetch(apiUrl, {
               method: 'POST',
               headers,
@@ -230,6 +249,93 @@ export class ProviderEngine {
   }
 
   /**
+   * Execute chat completion against Google Gemini Native API
+   */
+  static async callGemini(apiUrl, apiKey, model, messages, options = {}) {
+    const timeoutMs = options.timeout_ms || parseInt(process.env.BACKEND_TIMEOUT_MS, 10) || 90000;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      let systemInstruction = null;
+      const contents = [];
+
+      for (const msg of messages) {
+        if (msg.role === 'system') {
+          systemInstruction = {
+            parts: [{ text: msg.content }]
+          };
+        } else {
+          contents.push({
+            role: msg.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: msg.content }]
+          });
+        }
+      }
+
+      let targetUrl = apiUrl;
+      if (!targetUrl.includes(':generateContent')) {
+        const cleanBase = targetUrl.replace(/\/+$/, '');
+        targetUrl = `${cleanBase}/v1beta/models/${model}:generateContent`;
+      }
+      if (apiKey && !targetUrl.includes('key=')) {
+        targetUrl += `${targetUrl.includes('?') ? '&' : '?'}key=${encodeURIComponent(apiKey)}`;
+      }
+
+      const payload = {
+        contents,
+        generationConfig: {
+          maxOutputTokens: options.max_tokens || 4096
+        }
+      };
+
+      if (systemInstruction) {
+        payload.systemInstruction = systemInstruction;
+      }
+      if (options.temperature !== undefined) {
+        payload.generationConfig.temperature = options.temperature;
+      }
+
+      const response = await fetch(targetUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Gemini API error (${response.status}): ${errorText}`);
+      }
+
+      const data = await response.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text === undefined || text === null) {
+        throw new Error(`Unexpected Gemini response format: ${JSON.stringify(data)}`);
+      }
+
+      return text;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /**
+   * Intelligently route call to appropriate provider protocol
+   */
+  static async executeProviderCall(url, key, model, messages, options = {}) {
+    if (url.includes('anthropic.com')) {
+      return await this.callAnthropic(url, key, model, messages, options);
+    }
+    if (url.includes('generativelanguage.googleapis.com')) {
+      return await this.callGemini(url, key, model, messages, options);
+    }
+    return await this.callOpenAICompatible(url, key, model, messages, options);
+  }
+
+  /**
    * Resolve active provider configuration and execute completion with automatic cascade
    * @param {Array} messages Conversation messages array
    * @param {object} options Per-request execution options
@@ -261,12 +367,7 @@ export class ProviderEngine {
 
     if (!isMockOrEmptyKey && options.provider !== 'fallback' && options.provider !== 'local') {
       try {
-        let content;
-        if (primaryUrl.includes('anthropic.com')) {
-          content = await this.callAnthropic(primaryUrl, primaryKey, primaryModel, messages, options);
-        } else {
-          content = await this.callOpenAICompatible(primaryUrl, primaryKey, primaryModel, messages, options);
-        }
+        const content = await this.executeProviderCall(primaryUrl, primaryKey, primaryModel, messages, options);
 
         return {
           content,
@@ -301,7 +402,7 @@ export class ProviderEngine {
 
     if (isFallbackKeyValid && options.provider !== 'local') {
       try {
-        const fallbackContent = await this.callOpenAICompatible(fallbackUrl, fallbackKey, fallbackModel, messages, options);
+        const fallbackContent = await this.executeProviderCall(fallbackUrl, fallbackKey, fallbackModel, messages, options);
         return {
           content: fallbackContent,
           provider: 'fallback',
@@ -320,7 +421,7 @@ export class ProviderEngine {
     if (options.provider === 'local' || !isFallbackKeyValid) {
       try {
         this.logDiagnostic(`Attempting local provider at ${localUrl}...`);
-        const localContent = await this.callOpenAICompatible(localUrl, '', localModel, messages, { ...options, retries: 0, timeout_ms: 10000 });
+        const localContent = await this.executeProviderCall(localUrl, '', localModel, messages, { ...options, retries: 0, timeout_ms: 10000 });
         return {
           content: localContent,
           provider: 'local',

@@ -8,6 +8,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { RelationalArchitectureEngine } from './relational-architecture-engine.js';
 
 export class ProjectDetector {
   /**
@@ -321,8 +322,25 @@ export class ProjectDetector {
       profile.database = 'sqlite';
     }
 
+    // Dynamic Relational Architecture Inspection
+    const relationalProfile = RelationalArchitectureEngine.inspectArchitecture(resolvedDir);
+    profile.relational_architecture = {
+      layers: relationalProfile.layers,
+      entities_count: relationalProfile.entities.length,
+      relations_count: relationalProfile.relations.length,
+      boundary_violations: relationalProfile.boundary_violations
+    };
+    profile.entities = relationalProfile.entities;
+    profile.relations = relationalProfile.relations;
+    profile.multi_tenancy = relationalProfile.multi_tenancy;
+    profile.mermaid_diagram = relationalProfile.mermaid_diagram;
+
+    if (relationalProfile.architectural_style !== 'standard_layered') {
+      profile.architecture_style = relationalProfile.architectural_style;
+    }
+
     // Generate concise summary
-    profile.summary = `Detected ${profile.framework_display} (${profile.language.toUpperCase()}) with ${profile.orm !== 'none' ? profile.orm.toUpperCase() + ' ORM' : 'native data layer'}. Architecture: ${profile.architecture_style}. Detected layers: [${profile.detected_layers.join(', ') || 'standard'}].`;
+    profile.summary = `Detected ${profile.framework_display} (${profile.language.toUpperCase()}) with ${profile.orm !== 'none' ? profile.orm.toUpperCase() + ' ORM' : 'native data layer'}. Architecture: ${profile.architecture_style}. Multi-Tenancy: ${profile.multi_tenancy.enabled ? profile.multi_tenancy.mode : 'disabled'}. Detected layers: [${profile.detected_layers.join(', ') || 'standard'}].`;
 
     return profile;
   }

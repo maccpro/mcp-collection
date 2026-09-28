@@ -280,6 +280,9 @@ const TOOLS = [
 ];
 
 async function handleToolCall(name, args = {}) {
+  // Hot-reload .env so configuration updates take effect immediately without process restart
+  loadEnv(__dirname, { override: true });
+
   // 1. Code Generation Tools (Primary & Alias)
   if (name === 'backend_generate_code' || name === 'mimo_generate_code') {
     const projectPath = args.project_path || process.cwd();
@@ -464,7 +467,7 @@ rl.on('line', async (line) => {
             },
             serverInfo: {
               name: 'backend-mcp',
-              version: '2.0.0'
+              version: '2.1.0'
             }
           }
         });

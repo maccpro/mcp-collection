@@ -10,12 +10,16 @@ Designed specifically for AI coding assistants like **Google Antigravity**, **Cl
 
 ## ⚡ Enterprise Features
 
+- **Dynamic Relational Architecture Engine:** Automatically maps the project's layered topology (Presentation ➔ Application ➔ Domain ➔ Persistence), extracts Model entity relationships (`hasMany`, `belongsTo`, `belongsToMany`), and generates dynamic Mermaid flowcharts.
+- **Enterprise Multi-Tenancy & Isolation Introspection:** Detects multi-tenant SaaS architectures (`stancl/tenancy`, `spatie/laravel-multitenancy`, `database/migrations/tenant`), automatically enforcing strict tenant-scoping mandates and preventing cross-tenant data leaks.
 - **Dynamic Multi-Framework Stack Detection:** Automatically inspects target workspaces to detect backend framework (Laravel, NestJS, Express, FastAPI, Django, Spring Boot, Go/Gin, Rust/Axum), ORM (Eloquent, Prisma, TypeORM, SQLAlchemy, GORM), and architectural layers.
 - **Architectural Persona Synthesis:** Automatically injects framework-specific clean code mandates (e.g. strict Form Request validation, Service/Action classes, API Resource serialization, DB transaction safety, DTO validation).
-- **Multi-Provider Failover Cascades:** Primary (MiMo / OpenAI / Claude) ➔ Fallback (DeepSeek / Groq) ➔ Local Offline (Ollama).
-- **Automated Resilience:** Exponential backoff with jitter on HTTP 429 / 5xx, `AbortController` timeout protection, and dynamic parameter adaptation (`max_tokens` vs `max_completion_tokens`, reasoning toggles).
-- **OWASP Security & Code Review:** Real-time static heuristic checks + AI semantic audit for SQL Injection, IDOR, Mass Assignment, Sensitive Data Leaks, and N+1 query bottlenecks.
-- **OpenAPI 3.1 & Postman Generator:** Instantly converts backend code or routes into valid OpenAPI 3.1 specifications (YAML/JSON) or Postman collections.
+- **Multi-Provider Failover Cascades:** Primary (MiMo / OpenAI / Claude / Gemini) ➔ Fallback (DeepSeek / Groq) ➔ Local Offline (Ollama).
+- **Google Gemini Native API Support:** Native REST integration with Google Gemini endpoints (`generativelanguage.googleapis.com`) alongside OpenAI and Anthropic.
+- **Automated Resilience & OpenAI Sanitization:** Exponential backoff with jitter on HTTP 429 / 5xx, `AbortController` timeout protection, automatic parameter adaptation (`max_tokens` vs `max_completion_tokens`), and automatic stripping of unsupported `thinking` parameters on native OpenAI endpoints.
+- **Real-Time Environment Hot-Reloading:** Automatically reloads `.env` configuration changes on every MCP tool request without requiring server restart.
+- **12-Rule OWASP & Architectural Security Auditor:** Static heuristic checks + AI semantic audit with categorized severity and risk scoring (0-100) for SQLi, IDOR, Mass Assignment, Tenant Scope Bypasses, Sensitive Data Leaks, Missing Atomic Transactions (`DB::transaction`), and N+1 query bottlenecks.
+- **OpenAPI 3.1 & Postman Generator:** Instantly converts backend code or routes into valid OpenAPI 3.1 specifications (YAML/JSON) or Postman collections with nested relational schemas and RFC 9457 Problem Details.
 - **Zero External Dependencies:** Built 100% on Node.js standard libraries (`node:fs`, `node:path`, `node:readline`, `node:url`, native `fetch`). No `npm install` required!
 
 ---
