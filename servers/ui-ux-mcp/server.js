@@ -214,6 +214,9 @@ const TOOLS = [
 ];
 
 async function handleToolCall(name, args) {
+  // Hot-reload .env so configuration updates take effect immediately without process restart
+  loadEnv(__dirname, { override: true });
+
   // 1. ui_ux_suggest_pattern
   if (name === 'ui_ux_suggest_pattern') {
     const patternKey = args.component_type;

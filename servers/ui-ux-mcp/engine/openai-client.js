@@ -32,11 +32,14 @@ export class OpenAIClient {
         p.max_tokens = tokenLimit;
       }
 
-      // Pass thinking parameter if explicitly enabled or configured in environment
-      if (options.thinking_enabled !== undefined) {
-        p.thinking = { type: options.thinking_enabled ? 'enabled' : 'disabled' };
-      } else if (process.env.UI_UX_THINKING) {
-        p.thinking = { type: process.env.UI_UX_THINKING === 'disabled' ? 'disabled' : 'enabled' };
+      // Pass thinking parameter only if provider is not native OpenAI (OpenAI reasons natively without custom thinking parameter)
+      const isNativeOpenAI = apiUrl.includes('api.openai.com');
+      if (!isNativeOpenAI) {
+        if (options.thinking_enabled !== undefined) {
+          p.thinking = { type: options.thinking_enabled ? 'enabled' : 'disabled' };
+        } else if (process.env.UI_UX_THINKING) {
+          p.thinking = { type: process.env.UI_UX_THINKING === 'disabled' ? 'disabled' : 'enabled' };
+        }
       }
 
       return p;
@@ -67,7 +70,7 @@ export class OpenAIClient {
     }
 
     if (!response.ok) {
-      const errorText = await response.text();
+      let errorText = await response.text();
 
       // Parameter resilience auto-retry: max_tokens vs max_completion_tokens
       if (errorText.includes('max_tokens') && errorText.includes('max_completion_tokens')) {
@@ -78,6 +81,7 @@ export class OpenAIClient {
           headers,
           body: JSON.stringify(payload)
         });
+        if (!response.ok) errorText = await response.text();
       } else if (errorText.includes('temperature') || errorText.includes('unsupported value')) {
         // Temperature unsupported (e.g. o1/o3/gpt-5 models)
         payload = buildPayload(useMaxCompletionTokens, true);
@@ -87,11 +91,20 @@ export class OpenAIClient {
           headers,
           body: JSON.stringify(payload)
         });
+        if (!response.ok) errorText = await response.text();
+      } else if (errorText.includes('Unknown parameter') && errorText.includes('thinking')) {
+        // Thinking parameter unsupported by this provider
+        delete payload.thinking;
+        response = await fetch(apiUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload)
+        });
+        if (!response.ok) errorText = await response.text();
       }
 
       if (!response.ok) {
-        const retryError = await response.text();
-        throw new Error(`OpenAI-compatible API error (${response.status} ${response.statusText}): ${retryError}`);
+        throw new Error(`OpenAI-compatible API error (${response.status} ${response.statusText}): ${errorText}`);
       }
     }
 

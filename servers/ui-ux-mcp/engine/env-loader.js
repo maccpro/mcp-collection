@@ -5,8 +5,10 @@ import path from 'node:path';
  * Lightweight Zero-Dependency .env Loader
  * Reads .env file from the specified directory and cascade parent/sibling directories
  * @param {string} dir Base directory
+ * @param {Object} [options]
+ * @param {boolean} [options.override=false] Whether to overwrite existing process.env variables
  */
-export function loadEnv(dir) {
+export function loadEnv(dir, { override = false } = {}) {
   const candidates = [
     path.join(dir, '.env'),
     path.join(dir, '..', 'backend-mcp', '.env'),
@@ -35,7 +37,7 @@ export function loadEnv(dir) {
           value = value.substring(1, value.length - 1);
         }
 
-        if (!process.env[key]) {
+        if (override || !process.env[key]) {
           process.env[key] = value;
         }
       }
