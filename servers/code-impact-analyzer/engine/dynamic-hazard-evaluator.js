@@ -1,8 +1,9 @@
 /**
  * @file dynamic-hazard-evaluator.js
  * @description Dynamic runtime hazard evaluator for code diffs and semantic changes.
- * Evaluates in-flight queue serialization hazards, multi-tenant isolation leaks,
- * long-running DB transaction locks with external I/O, and destructive data mutations.
+ * Evaluates in-flight queue serialization hazards (constructor and public properties),
+ * multi-tenant isolation leaks, long-running DB transaction locks with external I/O,
+ * N+1 query loops, unbounded memory consumption, and destructive data mutations.
  */
 
 import { ASTClassClassifier } from './ast-class-classifier.js';
@@ -19,26 +20,42 @@ export class DynamicHazardEvaluator {
 
     for (const file of modifiedFiles) {
       const { filePath = '', oldContent = '', newContent = '', diff = '' } = file;
+
+      // Only evaluate PHP application files (skip markdown documentation, json, test runner scripts)
+      if (filePath && !filePath.endsWith('.php')) continue;
+
       const astNew = ASTClassClassifier.classify(newContent, filePath);
       const astOld = ASTClassClassifier.classify(oldContent, filePath);
 
-      // 1. In-Flight Queue Deserialization Hazard
+      // 1. In-Flight Queue Constructor Deserialization Hazard
       const queueHazard = this._detectQueueSerializationHazard(filePath, oldContent, newContent, astOld, astNew);
       if (queueHazard) hazards.push(queueHazard);
 
-      // 2. Multi-Tenant Data Leak Hazard
+      // 2. In-Flight Queue Public Property Deserialization Hazard
+      const queuePropHazard = this._detectQueuePropertyHazard(filePath, oldContent, newContent, astOld, astNew);
+      if (queuePropHazard) hazards.push(queuePropHazard);
+
+      // 3. Multi-Tenant Data Leak Hazard
       const tenantHazard = this._detectTenantIsolationHazard(filePath, newContent, diff, astNew);
       if (tenantHazard) hazards.push(tenantHazard);
 
-      // 3. DB Transaction with External Network / I/O Hazard
+      // 4. DB Transaction with External Network / I/O Hazard
       const txHazard = this._detectTransactionIOHazard(filePath, newContent, diff);
       if (txHazard) hazards.push(txHazard);
 
-      // 4. Raw Query / Unescaped SQL Hazard
+      // 5. N+1 Query in Loop Hazard
+      const nPlusOneHazard = this._detectNPlusOneHazard(filePath, newContent, diff);
+      if (nPlusOneHazard) hazards.push(nPlusOneHazard);
+
+      // 6. Unbounded Memory Consumption Hazard (e.g. Model::all() in jobs)
+      const memHazard = this._detectUnboundedMemoryHazard(filePath, newContent, diff, astNew);
+      if (memHazard) hazards.push(memHazard);
+
+      // 7. Raw Query / Unescaped SQL Hazard
       const sqlHazard = this._detectRawQueryHazard(filePath, newContent, diff);
       if (sqlHazard) hazards.push(sqlHazard);
 
-      // 5. Missing Migration Down Method Hazard
+      // 8. Missing Migration Down Method Hazard
       if (astNew.category === 'migration') {
         const migrationHazard = this._detectMigrationSafetyHazard(filePath, newContent);
         if (migrationHazard) hazards.push(migrationHazard);
@@ -70,16 +87,14 @@ export class DynamicHazardEvaluator {
   }
 
   /**
-   * Detect in-flight queue serialization hazards
+   * Detect in-flight queue constructor parameter serialization hazards
    */
   static _detectQueueSerializationHazard(filePath, oldContent, newContent, astOld, astNew) {
     if (!astNew.is_async_queue && !astOld.is_async_queue) return null;
 
-    // Extract constructor parameters from old and new
     const oldCtor = this._extractConstructorParams(oldContent);
     const newCtor = this._extractConstructorParams(newContent);
 
-    // If new parameters added without default values, or existing parameters removed/reordered
     const paramChanged = this._compareConstructorParams(oldCtor, newCtor);
     if (paramChanged.has_breaking_change) {
       return {
@@ -87,9 +102,43 @@ export class DynamicHazardEvaluator {
         severity: 'CRITICAL',
         file: filePath,
         title: 'In-Flight Queue Deserialization Mismatch',
-        description: `Modified constructor signatures or serialized properties in queued job (${astNew.category}). In-flight queue workers will throw fatal Unserialize / ReflectionException upon processing older payloads.`,
+        description: `Modified constructor signatures in queued job (${astNew.category}). In-flight queue workers will throw fatal Unserialize / ReflectionException upon processing older payloads.`,
         details: paramChanged.details,
         remediation: 'Deploy queue workers with dual-signature support, flush pending queue safely, or provide default parameter values ($param = null).'
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Detect in-flight queue public property removal/renaming hazard
+   */
+  static _detectQueuePropertyHazard(filePath, oldContent, newContent, astOld, astNew) {
+    if (!astNew.is_async_queue && !astOld.is_async_queue) return null;
+    if (!oldContent || !newContent) return null;
+
+    const propRegex = /public\s+(?:readonly\s+)?(?:[?a-zA-Z0-9_|\\]+\s+)?\$([a-zA-Z0-9_]+)\s*[;=]/g;
+    const oldProps = new Set();
+    let m;
+    while ((m = propRegex.exec(oldContent)) !== null) {
+      oldProps.add(m[1]);
+    }
+
+    const newProps = new Set();
+    while ((m = propRegex.exec(newContent)) !== null) {
+      newProps.add(m[1]);
+    }
+
+    const removedProps = Array.from(oldProps).filter(p => !newProps.has(p));
+    if (removedProps.length > 0) {
+      return {
+        type: 'QUEUE_PROPERTY_REMOVED',
+        severity: 'HIGH',
+        file: filePath,
+        title: 'In-Flight Queue Serialized Property Removed',
+        description: `Public property [${removedProps.map(p => '$' + p).join(', ')}] was removed from queued job. In-flight jobs serialized with this property will fail or trigger undefined property notices.`,
+        remediation: 'Keep the property deprecated until existing queue batches are drained, or deploy during scheduled maintenance.'
       };
     }
 
@@ -126,7 +175,6 @@ export class DynamicHazardEvaluator {
    * Detect external I/O inside DB::transaction
    */
   static _detectTransactionIOHazard(filePath, newContent, diff) {
-    // Check if file uses DB::transaction
     const txMatch = newContent.match(/DB::transaction\s*\(\s*function\s*\([^)]*\)\s*\{([^}]+)\}/s) ||
                     newContent.match(/DB::beginTransaction\s*\(\s*\)([\s\S]+?)DB::commit\s*\(\s*\)/s);
 
@@ -152,6 +200,52 @@ export class DynamicHazardEvaluator {
           remediation: 'Move network calls, payment gateway APIs, and email dispatches outside the DB::transaction block or dispatch via deferred queue jobs.'
         };
       }
+    }
+
+    return null;
+  }
+
+  /**
+   * Detect N+1 query patterns in loops without eager loading
+   */
+  static _detectNPlusOneHazard(filePath, newContent, diff) {
+    const loopRegex = /(?:foreach|while|for)\s*\([^)]+\)\s*\{([^}]+)\}/g;
+    let m;
+    while ((m = loopRegex.exec(newContent)) !== null) {
+      const loopBody = m[1];
+      // Check if loop body contains direct queries
+      if (
+        /(?:->\s*(?:where|find|findOrFail|first|get)\b|[A-Z][a-zA-Z0-9_]*::(?:where|find|all|create)\b)/.test(loopBody)
+      ) {
+        return {
+          type: 'N_PLUS_ONE_QUERY_LOOP',
+          severity: 'HIGH',
+          file: filePath,
+          title: 'Potential N+1 Query Loop Hazard',
+          description: 'Database query executed repeatedly inside a loop. This leads to severe query amplification and database latency under production traffic.',
+          remediation: 'Eager load relationships before looping using with([...]), or batch queries using whereIn().'
+        };
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Detect unbounded memory consumption (e.g. Model::all() in jobs)
+   */
+  static _detectUnboundedMemoryHazard(filePath, newContent, diff, ast) {
+    if (!ast.is_async_queue && ast.category !== 'service' && ast.category !== 'action') return null;
+
+    if (/[A-Z][a-zA-Z0-9_]+::all\s*\(\s*\)/.test(diff) || /[A-Z][a-zA-Z0-9_]+::all\s*\(\s*\)/.test(newContent)) {
+      return {
+        type: 'UNBOUNDED_MEMORY_CONSUMPTION',
+        severity: 'MEDIUM',
+        file: filePath,
+        title: 'Unbounded Model::all() Call in Backend Processing',
+        description: 'Executing Model::all() without pagination or streaming loads the entire database table into PHP memory, causing fatal Out-Of-Memory (OOM) errors as data grows.',
+        remediation: 'Use chunkById(100, function ($batch) {...}) or cursor() to stream records efficiently.'
+      };
     }
 
     return null;
@@ -241,7 +335,6 @@ export class DynamicHazardEvaluator {
       return { has_breaking_change: false };
     }
 
-    // Check if new parameters without default were added
     if (newParams.length > oldParams.length) {
       const added = newParams.slice(oldParams.length);
       const nonDefaultAdded = added.filter(p => !p.hasDefault);
@@ -253,7 +346,6 @@ export class DynamicHazardEvaluator {
       }
     }
 
-    // Check if old parameters removed
     const newNames = new Set(newParams.map(p => p.name));
     const removed = oldParams.filter(p => !newNames.has(p.name));
     if (removed.length > 0) {

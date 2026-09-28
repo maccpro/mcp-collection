@@ -2,12 +2,14 @@
  * @file blast-radius-engine.js
  * @description Transitive Dependency Graph Builder, Risk Score Calculator,
  * and Mermaid Graph Generator for Code Impact Analysis.
+ * Powered by RelationalDependencyGraph with cycle-safe BFS traversal and dynamic depth.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { DynamicSymbolResolver } from './dynamic-symbol-resolver.js';
 import { ASTClassClassifier } from './ast-class-classifier.js';
+import { RelationalDependencyGraph } from './relational-dependency-graph.js';
 
 export class BlastRadiusEngine {
   /**
@@ -30,20 +32,23 @@ export class BlastRadiusEngine {
     // Collect all codebase files for indexing
     const indexedFiles = this._indexCodebase(repo_path, exclude_paths);
 
-    const blastRadiusGraph = {
-      level_0_origins: [],
-      level_1_direct: new Set(),
-      level_2_transitive: new Set(),
-      level_3_transitive: new Set()
-    };
-
+    // Initialize Relational Directed Graph
+    const graph = new RelationalDependencyGraph();
+    const origins = [];
     const details = [];
 
+    // Step 1: Register all files in graph
+    for (const f of indexedFiles) {
+      graph.addNode(f.path, 'file', f.path);
+    }
+
+    // Step 2: Build graph edges for targets and transitive dependencies
     for (const target of targets) {
       const targetPath = typeof target === 'string' ? target : target.path;
       const targetSymbols = typeof target === 'object' && target.symbols ? target.symbols : [];
 
-      blastRadiusGraph.level_0_origins.push(targetPath);
+      origins.push(targetPath);
+      graph.addNode(targetPath, 'file', targetPath);
 
       // Extract symbol aliases if available
       const resolvedSymbols = [];
@@ -55,49 +60,26 @@ export class BlastRadiusEngine {
         resolvedSymbols.push(...resolved.concrete_implementations);
       }
 
-      // Find Direct Callers (Level 1)
-      const directDependents = this._findCallers(targetPath, resolvedSymbols, indexedFiles, blastRadiusGraph.level_0_origins);
-      for (const dep of directDependents) {
-        blastRadiusGraph.level_1_direct.add(dep);
-      }
+      this._populateGraphEdges(targetPath, resolvedSymbols, indexedFiles, graph, max_depth);
 
-      // Find Transitive Callers (Level 2)
-      if (max_depth >= 2) {
-        for (const l1File of directDependents) {
-          const l2Dependents = this._findCallers(l1File, [], indexedFiles, [
-            ...blastRadiusGraph.level_0_origins,
-            ...blastRadiusGraph.level_1_direct
-          ]);
-          for (const dep of l2Dependents) {
-            blastRadiusGraph.level_2_transitive.add(dep);
-          }
-        }
-      }
-
-      // Find Level 3 Callers
-      if (max_depth >= 3) {
-        for (const l2File of blastRadiusGraph.level_2_transitive) {
-          const l3Dependents = this._findCallers(l2File, [], indexedFiles, [
-            ...blastRadiusGraph.level_0_origins,
-            ...blastRadiusGraph.level_1_direct,
-            ...blastRadiusGraph.level_2_transitive
-          ]);
-          for (const dep of l3Dependents) {
-            blastRadiusGraph.level_3_transitive.add(dep);
-          }
-        }
-      }
-
+      const directEdges = graph.getIncomingEdges(targetPath);
       details.push({
         target: targetPath,
         symbols_scanned: resolvedSymbols,
-        direct_callers_count: directDependents.length
+        direct_callers_count: directEdges.length
       });
     }
 
-    const l1Array = Array.from(blastRadiusGraph.level_1_direct);
-    const l2Array = Array.from(blastRadiusGraph.level_2_transitive);
-    const l3Array = Array.from(blastRadiusGraph.level_3_transitive);
+    // Step 3: Cycle-safe BFS Transitive Traversal
+    const traversal = graph.traverseBFS({
+      startNodes: origins,
+      maxDepth: max_depth,
+      direction: 'upstream'
+    });
+
+    const l1Array = traversal.level_1;
+    const l2Array = traversal.level_2;
+    const l3Array = traversal.level_3;
 
     // Calculate Risk Score
     const { riskScore, severity, factors } = this._calculateRiskScore({
@@ -105,67 +87,117 @@ export class BlastRadiusEngine {
       level2Count: l2Array.length,
       level3Count: l3Array.length,
       l1Files: l1Array,
-      origins: blastRadiusGraph.level_0_origins,
+      origins,
       indexedFiles
     });
 
     // Generate Mermaid Diagram
     const mermaidDiagram = this._generateMermaidDiagram(
-      blastRadiusGraph.level_0_origins,
+      origins,
       l1Array,
       l2Array
     );
 
     return {
       success: true,
-      total_affected_files: blastRadiusGraph.level_0_origins.length + l1Array.length + l2Array.length + l3Array.length,
+      total_affected_files: origins.length + l1Array.length + l2Array.length + l3Array.length,
       risk_score: riskScore,
       severity,
       risk_factors: factors,
       blast_radius: {
-        origins: blastRadiusGraph.level_0_origins,
+        origins,
         direct_dependents: l1Array,
         transitive_dependents_level_2: l2Array,
         transitive_dependents_level_3: l3Array
       },
+      paths: traversal.paths,
       mermaid_graph: mermaidDiagram,
       details
     };
   }
 
   /**
-   * Search indexed files for references or calls to target file/symbols
+   * Dynamically populate graph edges for target and transitive callers
    */
-  static _findCallers(targetFile, symbols, indexedFiles, visited) {
+  static _populateGraphEdges(startFile, symbols, indexedFiles, graph, maxDepth) {
+    const queue = [{ file: startFile, symbols, depth: 0 }];
+    const processed = new Set();
+
+    while (queue.length > 0) {
+      const { file: currentFile, symbols: currentSymbols, depth } = queue.shift();
+      if (processed.has(currentFile) || depth >= maxDepth) continue;
+      processed.add(currentFile);
+
+      const baseName = path.basename(currentFile, path.extname(currentFile));
+
+      for (const indexed of indexedFiles) {
+        if (indexed.path === currentFile) continue;
+
+        const rel = this._detectRelation(indexed.content, baseName, currentSymbols);
+        if (rel.isDependent) {
+          graph.addEdge(indexed.path, currentFile, rel.relationType);
+
+          if (depth + 1 < maxDepth && !processed.has(indexed.path)) {
+            queue.push({ file: indexed.path, symbols: [], depth: depth + 1 });
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Detect structural relation between dependent file and target
+   */
+  static _detectRelation(content, targetBaseName, symbols = []) {
+    // 1. Direct class inheritance
+    if (content.includes(`extends ${targetBaseName}`)) {
+      return { isDependent: true, relationType: 'INHERITS' };
+    }
+
+    // 2. Interface implementation
+    if (content.includes(`implements ${targetBaseName}`) || content.includes(`, ${targetBaseName}`)) {
+      return { isDependent: true, relationType: 'IMPLEMENTS' };
+    }
+
+    // 3. Trait usage
+    if (new RegExp(`use\\s+[^;]*\\b${targetBaseName}\\b[^;]*;`).test(content) && content.includes('class ')) {
+      return { isDependent: true, relationType: 'USES_TRAIT' };
+    }
+
+    // 4. Instantiation or static call
+    if (content.includes(`new ${targetBaseName}`) || content.includes(`${targetBaseName}::`)) {
+      return { isDependent: true, relationType: 'CALLS' };
+    }
+
+    // 5. Use statement import
+    if (content.includes(`use ${targetBaseName}`) || content.includes(`\\${targetBaseName}`)) {
+      return { isDependent: true, relationType: 'IMPORTS' };
+    }
+
+    // 6. Match specific symbols or dynamic scopes
+    if (symbols.length > 0) {
+      for (const sym of symbols) {
+        if (content.includes(sym)) {
+          return { isDependent: true, relationType: 'CALLS_METHOD' };
+        }
+      }
+    }
+
+    return { isDependent: false, relationType: null };
+  }
+
+  /**
+   * Search indexed files for references or calls to target file/symbols (kept for backward compatibility)
+   */
+  static _findCallers(targetFile, symbols, indexedFiles, visited = []) {
     const callers = [];
     const baseName = path.basename(targetFile, path.extname(targetFile));
 
     for (const file of indexedFiles) {
       if (visited.includes(file.path) || file.path === targetFile) continue;
 
-      let isDependent = false;
-
-      // 1. Direct class import / use statement
-      if (file.content.includes(`use ${baseName}`) || file.content.includes(`\\${baseName}`)) {
-        isDependent = true;
-      }
-
-      // 2. Class instantiation or static invocation: new TargetClass, TargetClass::
-      if (file.content.includes(`new ${baseName}`) || file.content.includes(`${baseName}::`)) {
-        isDependent = true;
-      }
-
-      // 3. Match specific symbols / dynamic scopes
-      if (!isDependent && symbols.length > 0) {
-        for (const sym of symbols) {
-          if (file.content.includes(sym)) {
-            isDependent = true;
-            break;
-          }
-        }
-      }
-
-      if (isDependent) {
+      const rel = this._detectRelation(file.content, baseName, symbols);
+      if (rel.isDependent) {
         callers.push(file.path);
       }
     }
@@ -304,7 +336,6 @@ export class BlastRadiusEngine {
           walk(fullPath);
         } else if (entry.isFile() && (entry.name.endsWith('.php') || entry.name.endsWith('.js') || entry.name.endsWith('.ts'))) {
           try {
-            // Read first 100KB max to keep memory footprint light
             const buffer = Buffer.alloc(100 * 1024);
             const fd = fs.openSync(fullPath, 'r');
             const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);

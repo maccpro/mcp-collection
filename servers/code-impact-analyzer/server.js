@@ -313,6 +313,7 @@ async function handleToolCall(name, args) {
         breaking_changes: breakingChanges,
         runtime_hazards: hazardReport,
         blast_radius_breakdown: blastResult.blast_radius,
+        trace_paths: blastResult.paths || {},
         mermaid_blast_radius_graph: blastResult.mermaid_graph,
         targeted_tests: testResult
       };
@@ -425,6 +426,7 @@ async function handleToolCall(name, args) {
           severity: blastResult.severity,
           risk_factors: blastResult.risk_factors,
           breakdown: blastResult.blast_radius,
+          trace_paths: blastResult.paths || {},
           mermaid_graph: blastResult.mermaid_graph
         },
         breaking_changes: breakingChanges,
@@ -536,6 +538,7 @@ async function handleToolCall(name, args) {
         symbol: args.symbol,
         dynamic_metadata: dynamicMeta,
         blast_radius: blastResult.blast_radius,
+        trace_paths: blastResult.paths || {},
         risk_score: blastResult.risk_score,
         severity: blastResult.severity,
         mermaid_graph: blastResult.mermaid_graph
@@ -640,10 +643,9 @@ async function handleToolCall(name, args) {
       const exceedsRisk = blastResult.risk_score > maxRisk;
       const hasBreaking = breakingChanges.length > 0;
       const hasCriticalHazards = hazardReport.critical_hazards > 0;
-      const isCritical = blastResult.severity === 'CRITICAL';
 
       const shouldFail = exceedsRisk ||
-                         (args.fail_on_breaking !== false && (hasBreaking || hasCriticalHazards || isCritical));
+                         (args.fail_on_breaking !== false && (hasBreaking || hasCriticalHazards));
 
       const status = shouldFail ? 'FAIL' : 'PASS';
 
@@ -721,7 +723,7 @@ rl.on('line', async (line) => {
             },
             serverInfo: {
               name: 'code-impact-analyzer',
-              version: '2.0.0'
+              version: '2.1.0'
             }
           }
         });

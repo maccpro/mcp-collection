@@ -34,7 +34,7 @@ export class GitDiffAnalyzer {
       };
     }
 
-    const parsedFiles = this._parseDiff(diffText, repoPath);
+    const parsedFiles = this._parseDiff(diffText, repoPath, params.staged_only);
 
     return {
       has_changes: parsedFiles.length > 0,
@@ -68,9 +68,56 @@ export class GitDiffAnalyzer {
   }
 
   /**
+   * Fetch old file content from git index or HEAD
+   */
+  static _getOldFileContent(repoPath, filePath, stagedOnly) {
+    if (!repoPath || !filePath) return '';
+    try {
+      const ref = stagedOnly ? 'HEAD' : 'HEAD';
+      return execSync(`git show ${ref}:${filePath}`, {
+        cwd: repoPath,
+        encoding: 'utf8',
+        maxBuffer: 5 * 1024 * 1024,
+        stdio: ['pipe', 'pipe', 'ignore']
+      });
+    } catch (e) {
+      return '';
+    }
+  }
+
+  /**
+   * Fetch new file content from working tree or staged buffer
+   */
+  static _getNewFileContent(repoPath, filePath, stagedOnly) {
+    if (!repoPath || !filePath) return '';
+    if (stagedOnly) {
+      try {
+        return execSync(`git show :${filePath}`, {
+          cwd: repoPath,
+          encoding: 'utf8',
+          maxBuffer: 5 * 1024 * 1024,
+          stdio: ['pipe', 'pipe', 'ignore']
+        });
+      } catch (e) {
+        // Fallback to disk
+      }
+    }
+
+    const fullPath = path.isAbsolute(filePath) ? filePath : path.join(repoPath, filePath);
+    if (fs.existsSync(fullPath)) {
+      try {
+        return fs.readFileSync(fullPath, 'utf8');
+      } catch (e) {
+        return '';
+      }
+    }
+    return '';
+  }
+
+  /**
    * Parse unified diff output
    */
-  static _parseDiff(diffText, repoPath) {
+  static _parseDiff(diffText, repoPath, stagedOnly = false) {
     const fileChunks = diffText.split(/^diff --git /m).filter(c => c.trim().length > 0);
     const files = [];
 
@@ -114,8 +161,11 @@ export class GitDiffAnalyzer {
       }
 
       // Check modified lines for method definitions or DB schema calls
+      const removedLines = [];
+      const addedLines = [];
       for (const line of lines) {
         if (line.startsWith('+') && !line.startsWith('+++')) {
+          addedLines.push(line.slice(1));
           const m = line.match(/(?:public|protected|private)?\s+function\s+([a-zA-Z0-9_]+)\s*\(/i);
           if (m && !changedSymbols.includes(m[1])) {
             changedSymbols.push(m[1]);
@@ -126,10 +176,24 @@ export class GitDiffAnalyzer {
           if (schemaMatch) {
             changedSymbols.push(`col:${schemaMatch[2]}`);
           }
+        } else if (line.startsWith('-') && !line.startsWith('---')) {
+          removedLines.push(line.slice(1));
         }
       }
 
       const fileCategory = this._categorizeFile(newPath);
+
+      // Extract real old and new content
+      let oldContent = status !== 'added' ? this._getOldFileContent(repoPath, oldPath, stagedOnly) : '';
+      let newContent = status !== 'deleted' ? this._getNewFileContent(repoPath, newPath, stagedOnly) : '';
+
+      // If outside a git repository or git show failed, reconstruct from diff hunk
+      if (!oldContent && removedLines.length > 0) {
+        oldContent = removedLines.join('\n');
+      }
+      if (!newContent && addedLines.length > 0) {
+        newContent = addedLines.join('\n');
+      }
 
       files.push({
         path: newPath,
@@ -137,7 +201,10 @@ export class GitDiffAnalyzer {
         status,
         category: fileCategory,
         hunks_count: changedHunks.length,
-        changed_symbols: changedSymbols
+        changed_symbols: changedSymbols,
+        diff: chunk.startsWith('diff --git') ? chunk : 'diff --git ' + chunk,
+        old_content: oldContent,
+        new_content: newContent
       });
     }
 

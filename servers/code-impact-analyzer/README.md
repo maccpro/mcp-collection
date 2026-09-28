@@ -1,39 +1,46 @@
-# @maccpro/code-impact-analyzer (v2.0.0)
+# @maccpro/code-impact-analyzer (v2.1.0)
 
-> **Enterprise Neuro-Symbolic Code Impact Analysis, Blast Radius Calculator, Runtime Hazard Evaluator & Cognitive Reasoning Engine**
+> **Enterprise Dynamic Relational Code Impact Analysis, Blast Radius Calculator, Runtime Hazard Evaluator & Cognitive Reasoning Engine**
 > 100% Dynamic, Zero-Hardcoded, Resilient with AI Cognitive Synthesis & 100% Offline Fallback.
 
 `code-impact-analyzer` is an enterprise-grade Model Context Protocol (MCP) server engineered to prevent production regressions, detect contract-breaking API changes, prevent in-flight queue worker crashes, detect multi-tenant isolation leaks, simulate database mutation hazards, and synthesize executive architectural decisions before code is committed or deployed.
 
 ---
 
-## 🚀 Key Innovations in v2.0 (Neuro-Symbolic & Zero-Hardcoded)
+## 🚀 Key Innovations in v2.1 (Dynamic Relational Architecture)
 
-1. **100% Zero-Hardcoded Architecture (PSR-4 & AST)**
-   - **Dynamic PSR-4 Introspection**: Parses `composer.json` (`autoload` and `autoload-dev`) and `phpunit.xml` dynamically. No assumptions of static folders like `app/Models` or `tests/Unit`. Works seamlessly with Modular monoliths (e.g. `modules/Billing/Entities/Invoice.php`), DDD, and custom namespaces.
-   - **Structural AST Classification**: Code entities are classified by token inheritance (`extends Model`, `implements ShouldQueue`, `extends FormRequest`, `use BelongsToTenant`, `public function handle()`), not directory path strings.
+1. **Dynamic Relational Dependency Graph (`RelationalDependencyGraph`)**
+   - **Typed Directed Graph**: Models codebase artifacts and database tables with typed relationships (`CALLS`, `INHERITS`, `IMPLEMENTS`, `USES_TRAIT`, `DISPATCHES`, `FOREIGN_KEY`, `INJECTS`).
+   - **Cycle-Safe BFS/DFS Traversal**: Dynamically traverses transitive blast radiuses to arbitrary depths (`max_depth`) without recursion overflow or duplicated loop logic.
+   - **Path Tracing**: Computes exact shortest causality paths (e.g. `OrderController -> OrderService -> InvoiceRepository -> invoices.total_amount`).
 
-2. **Runtime & Infrastructure Hazard Evaluator**
-   - **In-Flight Queue Deserialization Hazard**: Detects when modified queue job constructors or serialized properties will cause fatal `unserialize()` or `ReflectionException` crashes on running background workers (Redis / SQS / Horizon).
-   - **Multi-Tenant Isolation Breach**: Detects queries bypassing tenant scoping (`withoutGlobalScope('tenant')`, `withoutGlobalScopes()`, or raw `DB::table` missing `tenant_id`) in multi-tenant SaaS environments.
-   - **Long-Running DB Lock with External I/O**: Detects external network calls (`Http::post`, `curl_exec`, payment APIs, emails) inside `DB::transaction` blocks that hold database locks open during network latency.
-   - **Destructive Migration Safety**: Detects dropping columns or tables without zero-downtime dual-write strategy and flags missing `down()` rollback methods.
+2. **Advanced Contract Breaking Change Detector**
+   - Detects removed or renamed public/protected methods (`PUBLIC_METHOD_REMOVED`, `PROTECTED_METHOD_REMOVED`).
+   - Detects visibility narrowing (`public` to `protected` / `private`).
+   - Detects return type mutations and nullability narrowing (`RETURN_TYPE_MUTATED`).
+   - Detects newly added abstract methods in abstract classes (`ABSTRACT_METHOD_ADDED`).
+   - Detects removed public class properties (`PUBLIC_PROPERTY_REMOVED`).
 
-3. **Neuro-Symbolic Cognitive Reasoner (`cia_deep_impact_analysis` & `cia_executive_verdict`)**
+3. **Relational Database Impact & Foreign Key Cascade**
+   - **Foreign Key Cascades**: Discovers child foreign key constraints across migrations (`foreignId()->constrained()`, `references()->on()`).
+   - **Model Relationships**: Couples database table alterations to Eloquent relations (`belongsTo`, `hasMany`, etc.).
+   - **Composite Index Blast Radius**: Detects index degradation when leading composite index columns are modified.
+   - **Multi-Tenant Migration Governance**: Audits tenant-aware table modifications against tenant migration directories (Rule 7).
+
+4. **Runtime & Infrastructure Hazard Evaluator**
+   - **In-Flight Queue Deserialization**: Audits both constructor parameters and serialized public properties of `ShouldQueue` jobs.
+   - **N+1 Query Loop Detection**: Detects database queries or relation calls inside loops without eager loading.
+   - **Unbounded Memory Protection**: Detects un-chunked `Model::all()` in batch workers.
+   - **Multi-Tenant Isolation Breach**: Detects queries bypassing tenant scoping (`withoutGlobalScope('tenant')`, raw `DB::table` missing `tenant_id`).
+   - **Long-Running DB Lock with External I/O**: Detects network calls inside active database transactions.
+
+5. **100% Zero-Hardcoded Architecture (PSR-4 & AST)**
+   - **Dynamic PSR-4 Introspection**: Parses `composer.json` (`autoload` and `autoload-dev`), `phpunit.xml`, and tenant migration directories with mtime-based in-memory caching.
+   - **Structural AST Classification**: Code entities are classified by token inheritance, traits, and interfaces, not directory path strings.
+
+6. **Neuro-Symbolic Cognitive Reasoner (`cia_deep_impact_analysis` & `cia_executive_verdict`)**
    - Synthesizes complex AST diffs, symbol graphs, runtime hazards, and database blast radius into an executive architectural verdict (`APPROVE`, `REQUIRES_PEER_REVIEW`, `REJECT_BREAKING_CHANGES`).
-   - Supports OpenAI, MiMo, DeepSeek, Groq, and local Ollama models.
-   - **100% Deterministic Offline Fallback**: If no API key is provided or offline mode is preferred, the engine executes symbolic synthesis locally with zero latency, zero token cost, and 100% resilience.
-
-4. **Dynamic Symbol Graph & Multi-Depth Blast Radius (`cia_analyze_git_diff` & `cia_trace_symbol`)**
-   - Traces Level 1 Direct -> Level 2 Transitive -> Level 3 Architecture callers.
-   - Exports high-visibility Mermaid flowcharts (`flowchart TD`).
-   - Computes weighted risk scores based on AST structural classifications.
-
-5. **Test Impact Analysis (`cia_targeted_test_suite`)**
-   - Dynamically maps modified classes to their corresponding Pest or PHPUnit test files across all detected module and root test directories.
-   - Saves 75% to 95% of test execution time by executing only affected test suites.
-
----
+   - 100% Deterministic Offline Fallback with zero token cost.
 
 ## 🛠️ MCP Tools Overview
 
