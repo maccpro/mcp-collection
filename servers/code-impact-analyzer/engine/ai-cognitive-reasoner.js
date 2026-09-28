@@ -60,10 +60,10 @@ export class AICognitiveReasoner {
         provider = 'mimo';
         apiBase = apiBase || 'https://token-plan-sgp.xiaomimimo.com/v1';
         model = model || 'mimo-v2.6-pro';
-      } else if (process.env.DEEPSEEK_API_KEY) {
+      } else if (apiBase?.includes('deepseek') || model?.includes('deepseek') || process.env.DEEPSEEK_API_KEY) {
         provider = 'deepseek';
         apiBase = apiBase || 'https://api.deepseek.com/v1';
-        model = model || 'deepseek-chat';
+        model = model || 'deepseek-v4-pro';
       } else if (process.env.GROQ_API_KEY) {
         provider = 'groq';
         apiBase = apiBase || 'https://api.groq.com/openai/v1';

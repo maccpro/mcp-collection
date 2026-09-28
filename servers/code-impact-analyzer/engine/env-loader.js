@@ -2,9 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
- * Zero-dependency .env loader
+ * Zero-dependency .env loader with optional override support
+ * @param {string} baseDir Base directory containing .env
+ * @param {Object} [options]
+ * @param {boolean} [options.override=false] Whether to overwrite existing process.env variables
  */
-export function loadEnv(baseDir) {
+export function loadEnv(baseDir, { override = false } = {}) {
   const envPath = path.join(baseDir, '.env');
   if (!fs.existsSync(envPath)) return;
 
@@ -20,7 +23,7 @@ export function loadEnv(baseDir) {
       if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
         val = val.slice(1, -1);
       }
-      if (process.env[key] === undefined) {
+      if (override || process.env[key] === undefined) {
         process.env[key] = val;
       }
     }

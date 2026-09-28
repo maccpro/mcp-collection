@@ -233,6 +233,9 @@ const TOOLS = [
  * Handle MCP Tool Call
  */
 async function handleToolCall(name, args) {
+  // Hot-reload .env so configuration updates take effect immediately without process restart
+  loadEnv(__dirname, { override: true });
+
   const repoPath = args.repo_path || process.cwd();
 
   switch (name) {
