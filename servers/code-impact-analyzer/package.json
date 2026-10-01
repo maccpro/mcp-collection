@@ -1,7 +1,7 @@
 {
   "name": "@maccpro/code-impact-analyzer",
-  "version": "2.1.0",
-  "description": "Enterprise Dynamic Code Impact Analysis, Blast Radius Calculator & Breaking Change Detector for Laravel, PHP & Full-Stack Systems",
+  "version": "2.2.0",
+  "description": "Enterprise Dynamic Code Impact Analysis, ERP Bug-Fix Forensic Audit, Double-Entry Invariant Verifier & Breaking Change Detector for Laravel, PHP & Full-Stack Systems",
   "main": "server.js",
   "type": "module",
   "bin": {
@@ -17,6 +17,9 @@
     "code-impact-analysis",
     "blast-radius",
     "breaking-changes",
+    "erp-forensic-audit",
+    "double-entry-invariants",
+    "concurrency-auditor",
     "laravel",
     "php",
     "ast",

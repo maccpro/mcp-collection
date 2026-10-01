@@ -19,6 +19,12 @@ import { ASTClassClassifier } from '../engine/ast-class-classifier.js';
 import { DynamicHazardEvaluator } from '../engine/dynamic-hazard-evaluator.js';
 import { AICognitiveReasoner } from '../engine/ai-cognitive-reasoner.js';
 import { RelationalDependencyGraph } from '../engine/relational-dependency-graph.js';
+import { DynamicERPDetector } from '../engine/dynamic-erp-detector.js';
+import { ERPInvariantAuditor } from '../engine/erp-invariant-auditor.js';
+import { ConcurrencyHazardAuditor } from '../engine/concurrency-hazard-auditor.js';
+import { ForensicAuditEngine } from '../engine/forensic-audit-engine.js';
+import { ProductionReadinessGate } from '../engine/production-readiness-gate.js';
+import { ForensicReportFormatter } from '../engine/forensic-report-formatter.js';
 
 let passed = 0;
 let failed = 0;
@@ -469,6 +475,382 @@ await runTest('AICognitiveReasoner: produces complete deterministic offline verd
   assert.strictEqual(verdict.gate_status, 'FAIL');
   assert.strictEqual(verdict.deployment_readiness, 'BLOCKED');
   assert.ok(verdict.architectural_impact.recommended_action_items.length > 0);
+});
+
+// 12. DynamicERPDetector Tests
+await runTest('DynamicERPDetector: classifies accounting, inventory, and billing entities dynamically without hardcoded names', () => {
+  const ledgerCode = `
+    class FinancialTransaction extends Model {
+        protected $fillable = ['voucher_no', 'debit', 'credit', 'account_id', 'balance'];
+        public function lines() { return $this->hasMany(JournalLine::class); }
+    }
+  `;
+  const inventoryCode = `
+    class WarehouseInventory extends Model {
+        protected $fillable = ['warehouse_id', 'quantity', 'stock', 'batch_no', 'cogs'];
+        public function stockMovements() { return $this->hasMany(StockMovement::class); }
+    }
+  `;
+
+  const ledgerResult = DynamicERPDetector.classify(ledgerCode, 'app/Models/FinancialTransaction.php');
+  assert.ok(ledgerResult.is_erp_entity);
+  assert.ok(ledgerResult.roles.includes('accounting_ledger'));
+  assert.strictEqual(ledgerResult.has_debit_credit, true);
+
+  const inventoryResult = DynamicERPDetector.classify(inventoryCode, 'app/Models/WarehouseInventory.php');
+  assert.ok(inventoryResult.is_erp_entity);
+  assert.ok(inventoryResult.roles.includes('inventory_stock'));
+});
+
+// 13. ERPInvariantAuditor Tests
+await runTest('ERPInvariantAuditor: detects asymmetric journal entry (debit without balancing credit)', () => {
+  const asymmetricDiff = `
+    + $ledger->create([
+    +     'debit' => 500,
+    +     'account_id' => 101,
+    +     'voucher_no' => 'JV-2026-001'
+    + ]);
+  `;
+
+  const report = ERPInvariantAuditor.audit([
+    {
+      filePath: 'app/Services/BillingService.php',
+      newContent: asymmetricDiff,
+      diff: asymmetricDiff
+    }
+  ]);
+
+  assert.strictEqual(report.status, 'FAIL');
+  assert.ok(report.violations.some(v => v.rule === 'ACCOUNTING_ASYMMETRIC_JOURNAL_ENTRY'));
+  assert.strictEqual(report.has_accounting_hazard, true);
+});
+
+await runTest('ERPInvariantAuditor: detects direct deletion of financial ledger record', () => {
+  const deleteDiff = `
+    + JournalEntry::where('voucher_no', $voucherId)->delete();
+  `;
+
+  const report = ERPInvariantAuditor.audit([
+    {
+      filePath: 'app/Services/JournalService.php',
+      newContent: deleteDiff,
+      diff: deleteDiff
+    }
+  ]);
+
+  assert.ok(report.violations.some(v => v.rule === 'ACCOUNTING_HARD_DELETE_PROHIBITED'));
+});
+
+await runTest('ERPInvariantAuditor: detects unlogged stock decrement violating stock conservation equation', () => {
+  const directStockDecrement = `
+    + $product->decrement('quantity', 5);
+  `;
+
+  const report = ERPInvariantAuditor.audit([
+    {
+      filePath: 'app/Services/PosService.php',
+      newContent: directStockDecrement,
+      diff: directStockDecrement
+    }
+  ]);
+
+  assert.strictEqual(report.status, 'FAIL');
+  assert.ok(report.violations.some(v => v.rule === 'INVENTORY_UNLOGGED_STOCK_MUTATION'));
+  assert.strictEqual(report.has_inventory_hazard, true);
+});
+
+await runTest('ERPInvariantAuditor: detects non-transactional multi-entity writes in ERP entity', () => {
+  const multiWrite = `
+    class OrderCheckoutService {
+        protected $fillable = ['voucher_no', 'balance', 'debit', 'credit'];
+        public function checkout() {
+            $invoice = Invoice::create(['amount' => 100]);
+            $payment = Payment::create(['invoice_id' => $invoice->id]);
+            $customer->save();
+        }
+    }
+  `;
+
+  const report = ERPInvariantAuditor.audit([
+    {
+      filePath: 'app/Services/OrderCheckoutService.php',
+      newContent: multiWrite,
+      diff: multiWrite
+    }
+  ]);
+
+  assert.ok(report.violations.some(v => v.rule === 'ATOMICITY_NON_TRANSACTIONAL_MULTI_WRITE'));
+});
+
+await runTest('ERPInvariantAuditor: detects swallowed exception in transactional path', () => {
+  const swallowedTx = `
+    DB::transaction(function() {
+        try {
+            $invoice->save();
+        } catch (\\Exception $e) {
+            Log::error($e->getMessage());
+            return null;
+        }
+    });
+  `;
+
+  const report = ERPInvariantAuditor.audit([
+    {
+      filePath: 'app/Services/InvoiceService.php',
+      newContent: swallowedTx,
+      diff: swallowedTx
+    }
+  ]);
+
+  assert.ok(report.violations.some(v => v.rule === 'ATOMICITY_SWALLOWED_EXCEPTION_HAZARD'));
+});
+
+// 14. ConcurrencyHazardAuditor Tests
+await runTest('ConcurrencyHazardAuditor: detects read-modify-write without lockForUpdate', () => {
+  const rmwCode = `
+    $account = Account::find($id);
+    $account->balance -= $amount;
+    $account->save();
+  `;
+
+  const report = ConcurrencyHazardAuditor.audit([
+    {
+      filePath: 'app/Services/WalletService.php',
+      newContent: rmwCode,
+      diff: rmwCode
+    }
+  ]);
+
+  assert.strictEqual(report.status, 'CRITICAL_HAZARDS');
+  assert.ok(report.hazards.some(h => h.type === 'CONCURRENCY_LOST_UPDATE_RACE'));
+  assert.strictEqual(report.hazards[0].severity, 'CRITICAL');
+});
+
+await runTest('ConcurrencyHazardAuditor: detects missing idempotency guard on webhook/payment callback', () => {
+  const webhookCode = `
+    class StripeWebhookController extends Controller {
+        public function handleWebhook(Request $request) {
+            $order = Order::find($request->order_id);
+            $order->update(['status' => 'paid']);
+            Payment::create(['order_id' => $order->id, 'amount' => 100]);
+        }
+    }
+  `;
+
+  const report = ConcurrencyHazardAuditor.audit([
+    {
+      filePath: 'app/Http/Controllers/StripeWebhookController.php',
+      newContent: webhookCode,
+      diff: webhookCode
+    }
+  ]);
+
+  assert.ok(report.hazards.some(h => h.type === 'IDEMPOTENCY_MISSING_GUARD'));
+});
+
+await runTest('ConcurrencyHazardAuditor: detects TOCTOU race condition window', () => {
+  const toctouCode = `
+    if ($product->stock >= $requestedQty) {
+        $product->decrement('stock', $requestedQty);
+    }
+  `;
+
+  const report = ConcurrencyHazardAuditor.audit([
+    {
+      filePath: 'app/Services/OrderService.php',
+      newContent: toctouCode,
+      diff: toctouCode
+    }
+  ]);
+
+  assert.ok(report.hazards.some(h => h.type === 'CONCURRENCY_TOCTOU_RACE'));
+});
+
+// 15. ForensicAuditEngine & Historical Compatibility Tests
+await runTest('ForensicAuditEngine: reconstructs before-vs-after behavioral drift and verifies root-cause', () => {
+  const driftDiff = `
+    diff --git a/app/Services/InvoiceService.php b/app/Services/InvoiceService.php
+    @@ -10,3 +10,6 @@
+    + if (!$customer) {
+    +     return null;
+    + }
+  `;
+
+  const forensic = ForensicAuditEngine.auditBugFix({
+    modifiedFiles: [
+      {
+        filePath: 'app/Services/InvoiceService.php',
+        diff: driftDiff,
+        newContent: 'if (!$customer) return null;'
+      }
+    ]
+  });
+
+  assert.strictEqual(forensic.root_cause_verification.category, 'C. WORKAROUND');
+  assert.ok(forensic.behavioral_drift.length > 0);
+  assert.ok(forensic.all_findings.length >= 0);
+});
+
+await runTest('ForensicAuditEngine: flags dynamic accessor calculation on historical transactional entities', () => {
+  const accessorCode = `
+    class HistoricalInvoice extends Model {
+        public function getTaxAmountAttribute() {
+            return $this->subtotal * 0.15;
+        }
+    }
+  `;
+
+  const forensic = ForensicAuditEngine.auditBugFix({
+    modifiedFiles: [
+      {
+        filePath: 'app/Models/HistoricalInvoice.php',
+        newContent: accessorCode,
+        diff: '+ public function getTaxAmountAttribute()'
+      }
+    ]
+  });
+
+  assert.strictEqual(forensic.historical_compatibility.has_historical_risks, true);
+  assert.ok(forensic.historical_compatibility.historical_risks.some(r => r.type === 'RETROSPECTIVE_CALCULATION_MUTATION'));
+});
+
+// 16. ProductionReadinessGate Tests
+await runTest('ProductionReadinessGate: evaluates Gates A through J with evidence collection', () => {
+  const cleanForensic = {
+    root_cause_verification: { category: 'A. ROOT_CAUSE' },
+    accounting_integrity: [],
+    inventory_integrity: [],
+    atomicity_integrity: [],
+    concurrency_integrity: [],
+    historical_compatibility: { has_historical_risks: false, reconciliation_required: false },
+    confirmed_issues: []
+  };
+
+  const gateResult = ProductionReadinessGate.evaluate({
+    forensicResult: cleanForensic,
+    hazardReport: { critical_hazards: 0, hazards: [] },
+    breakingReport: { breaking_changes: [] }
+  });
+
+  assert.strictEqual(gateResult.overall_decision, 'PASS');
+  assert.strictEqual(gateResult.is_production_ready, true);
+  assert.strictEqual(gateResult.total_gates, 10);
+  assert.strictEqual(gateResult.failed_gates_count, 0);
+  assert.strictEqual(gateResult.gates.gate_c_accounting_integrity.status, 'PASS');
+  assert.strictEqual(gateResult.gates.gate_d_inventory_integrity.status, 'PASS');
+});
+
+await runTest('ProductionReadinessGate: blocks production gate when critical ERP violations exist', () => {
+  const blockedForensic = {
+    root_cause_verification: { category: 'A. ROOT_CAUSE' },
+    accounting_integrity: [
+      { title: 'Asymmetric Journal Entry', classification: 'CONFIRMED ISSUE', description: 'Debit without Credit' }
+    ],
+    inventory_integrity: [],
+    atomicity_integrity: [],
+    concurrency_integrity: [],
+    historical_compatibility: { has_historical_risks: false },
+    confirmed_issues: [{ title: 'Asymmetric Journal Entry' }]
+  };
+
+  const gateResult = ProductionReadinessGate.evaluate({
+    forensicResult: blockedForensic,
+    hazardReport: { critical_hazards: 0, hazards: [] },
+    breakingReport: { breaking_changes: [] }
+  });
+
+  assert.strictEqual(gateResult.overall_decision, 'BLOCKED_FAIL');
+  assert.strictEqual(gateResult.is_production_ready, false);
+  assert.strictEqual(gateResult.gates.gate_c_accounting_integrity.status, 'FAIL');
+});
+
+// 17. ForensicReportFormatter Tests (29-Section Report)
+await runTest('ForensicReportFormatter: generates complete 29-section Markdown report with all required headers', () => {
+  const sampleForensic = {
+    audit_timestamp: '2026-10-01T21:40:00.000Z',
+    bug_reconstruction: {
+      original_symptom: 'POS checkout balance drift',
+      root_cause: 'Missing row lock on inventory decrement',
+      trigger_condition: 'Simultaneous POS checkout',
+      affected_workflows: ['app/Services/PosService.php'],
+      confidence: 'High'
+    },
+    root_cause_verification: { category: 'A. ROOT_CAUSE', notes: ['Fixed root race condition.'] },
+    behavioral_drift: [{ scenario: 'POS Locking', before: 'Unlocked', after: 'Locked', impact: 'Safe under concurrency' }],
+    accounting_integrity: [],
+    inventory_integrity: [],
+    atomicity_integrity: [],
+    concurrency_integrity: [],
+    historical_compatibility: { has_historical_risks: false, reconciliation_items: [] },
+    confirmed_issues: [],
+    probable_issues: [],
+    potential_risks: [],
+    total_findings: 0
+  };
+
+  const sampleGates = {
+    overall_decision: 'PASS',
+    is_production_ready: true,
+    passed_gates_count: 10,
+    gates: {
+      gate_a_functional_correctness: { status: 'PASS', evidence: 'Clean execution.' },
+      gate_b_regression_safety: { status: 'PASS', evidence: 'Zero signature mutations.' },
+      gate_c_accounting_integrity: { status: 'PASS', evidence: 'Debit = Credit preserved.' },
+      gate_d_inventory_integrity: { status: 'PASS', evidence: 'Stock conservation verified.' },
+      gate_e_data_integrity: { status: 'PASS', evidence: 'FKs intact.' },
+      gate_f_tenant_isolation: { status: 'PASS', evidence: 'Tenant scoping preserved.' },
+      gate_g_security: { status: 'PASS', evidence: 'Auth verified.' },
+      gate_h_concurrency: { status: 'PASS', evidence: 'lockForUpdate present.' },
+      gate_i_performance: { status: 'PASS', evidence: 'No N+1.' },
+      gate_j_historical_compatibility: { status: 'PASS', evidence: 'Compatible.' }
+    }
+  };
+
+  const md = ForensicReportFormatter.formatMarkdown({
+    forensicResult: sampleForensic,
+    productionGates: sampleGates,
+    blastRadius: { risk_score: 10, severity: 'LOW', mermaid_diagram: 'graph TD; A-->B' },
+    breakingChanges: [],
+    hazards: [],
+    targetedTests: ['tests/Feature/PosCheckoutTest.php']
+  });
+
+  // Verify all 29 Section Headers exist
+  assert.ok(md.includes('# ERP Bug-Fix Forensic Audit'));
+  assert.ok(md.includes('## 1. Executive Summary'));
+  assert.ok(md.includes('## 2. Original Bug Analysis'));
+  assert.ok(md.includes('## 3. Root Cause'));
+  assert.ok(md.includes('## 4. Implemented Fix Analysis'));
+  assert.ok(md.includes('## 5. Before vs After Behavior'));
+  assert.ok(md.includes('## 6. Change Blast Radius'));
+  assert.ok(md.includes('## 7. Dependency Graph'));
+  assert.ok(md.includes('## 8. Confirmed Issues'));
+  assert.ok(md.includes('## 9. Probable Issues'));
+  assert.ok(md.includes('## 10. Potential Risks'));
+  assert.ok(md.includes('## 11. Accounting Integrity Analysis'));
+  assert.ok(md.includes('## 12. Inventory Integrity Analysis'));
+  assert.ok(md.includes('## 13. Transaction & Atomicity Analysis'));
+  assert.ok(md.includes('## 14. Concurrency Analysis'));
+  assert.ok(md.includes('## 15. Idempotency Analysis'));
+  assert.ok(md.includes('## 16. Historical Data Compatibility'));
+  assert.ok(md.includes('## 17. Database Integrity'));
+  assert.ok(md.includes('## 18. Multi-Tenant Security'));
+  assert.ok(md.includes('## 19. Authorization & Security'));
+  assert.ok(md.includes('## 20. API Compatibility'));
+  assert.ok(md.includes('## 21. Event / Queue / Observer Impact'));
+  assert.ok(md.includes('## 22. Reporting Impact'));
+  assert.ok(md.includes('## 23. Performance Impact'));
+  assert.ok(md.includes('## 24. Edge-Case Analysis'));
+  assert.ok(md.includes('## 25. Reconciliation Requirements'));
+  assert.ok(md.includes('## 26. Regression Test Matrix'));
+  assert.ok(md.includes('## 27. Production Readiness Gates'));
+  assert.ok(md.includes('## 28. Required Actions'));
+  assert.ok(md.includes('### Must Fix'));
+  assert.ok(md.includes('### Must Test'));
+  assert.ok(md.includes('### Must Reconcile'));
+  assert.ok(md.includes('### Should Improve'));
+  assert.ok(md.includes('### Optional'));
+  assert.ok(md.includes('## 29. Final Evidence Summary'));
 });
 
 console.log(`\n--- Test Results: ${passed} Passed, ${failed} Failed ---\n`);

@@ -24,6 +24,12 @@ import { DynamicProjectIntrospector } from './engine/dynamic-project-introspecto
 import { ASTClassClassifier } from './engine/ast-class-classifier.js';
 import { DynamicHazardEvaluator } from './engine/dynamic-hazard-evaluator.js';
 import { AICognitiveReasoner } from './engine/ai-cognitive-reasoner.js';
+import { DynamicERPDetector } from './engine/dynamic-erp-detector.js';
+import { ERPInvariantAuditor } from './engine/erp-invariant-auditor.js';
+import { ConcurrencyHazardAuditor } from './engine/concurrency-hazard-auditor.js';
+import { ForensicAuditEngine } from './engine/forensic-audit-engine.js';
+import { ProductionReadinessGate } from './engine/production-readiness-gate.js';
+import { ForensicReportFormatter } from './engine/forensic-report-formatter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -226,6 +232,92 @@ const TOOLS = [
         }
       }
     }
+  },
+  {
+    name: 'cia_erp_forensic_audit',
+    description: 'Enterprise ERP Bug-Fix Forensic Impact & Regression Audit. Evaluates behavioral drift, accounting invariants (Debit = Credit), perpetual inventory equations, concurrency lost updates (missing lockForUpdate), historical data compatibility, evaluates the 10 Production Readiness Gates (A through J), and generates the complete 29-section executive forensic report (Markdown or JSON).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo_path: {
+          type: 'string',
+          description: 'Root directory of the repository (defaults to current working directory).'
+        },
+        staged_only: {
+          type: 'boolean',
+          default: false,
+          description: 'Analyze only git staged changes.'
+        },
+        raw_diff: {
+          type: 'string',
+          description: 'Optional raw diff string to analyze directly.'
+        },
+        bug_context: {
+          type: 'object',
+          description: 'Optional metadata on the original bug (original_symptom, root_cause, trigger).',
+          properties: {
+            original_symptom: { type: 'string' },
+            root_cause: { type: 'string' },
+            trigger: { type: 'string' }
+          }
+        },
+        format: {
+          type: 'string',
+          enum: ['markdown', 'json'],
+          default: 'markdown',
+          description: 'Output format: 29-section Markdown report or structured JSON telemetry.'
+        },
+        max_depth: {
+          type: 'integer',
+          default: 3,
+          description: 'Maximum transitive graph traversal depth.'
+        }
+      }
+    }
+  },
+  {
+    name: 'cia_erp_invariants_check',
+    description: 'Dynamic ERP Invariants & Conservation Law Auditor. Enforces double-entry balance (Debit = Credit), perpetual stock conservation equations, accounts receivable/payable formulas, and multi-table transactional atomicity.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo_path: {
+          type: 'string',
+          description: 'Root directory of the repository.'
+        },
+        staged_only: {
+          type: 'boolean',
+          default: false,
+          description: 'Analyze only git staged changes.'
+        },
+        raw_diff: {
+          type: 'string',
+          description: 'Optional raw diff string to analyze directly.'
+        }
+      }
+    }
+  },
+  {
+    name: 'cia_production_gates',
+    description: 'Evaluates the 10 Production Readiness Gates (Gate A: Functional Correctness to Gate J: Historical Compatibility) with empirical evidence logging for CI/CD pipelines and deployment safety.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo_path: {
+          type: 'string',
+          description: 'Root directory of the repository.'
+        },
+        staged_only: {
+          type: 'boolean',
+          default: true,
+          description: 'Whether to check staged changes.'
+        },
+        raw_diff: {
+          type: 'string',
+          description: 'Optional raw diff string.'
+        }
+      }
+    }
   }
 ];
 
@@ -389,14 +481,25 @@ async function handleToolCall(name, args) {
       }
 
       // Hazards
-      const hazardReport = DynamicHazardEvaluator.evaluateHazards(
-        diffResult.files.map(f => ({
-          filePath: f.path,
-          oldContent: f.old_content || '',
-          newContent: f.new_content || '',
-          diff: f.diff || ''
-        }))
-      );
+      const fileData = diffResult.files.map(f => ({
+        filePath: f.path,
+        oldContent: f.old_content || '',
+        newContent: f.new_content || '',
+        diff: f.diff || ''
+      }));
+
+      const hazardReport = DynamicHazardEvaluator.evaluateHazards(fileData);
+
+      // ERP Forensic Audit & Production Readiness Gates
+      const forensicResult = ForensicAuditEngine.auditBugFix({
+        modifiedFiles: fileData,
+        repoPath
+      });
+      const productionGates = ProductionReadinessGate.evaluate({
+        forensicResult,
+        hazardReport,
+        breakingReport: { breaking_changes: breakingChanges }
+      });
 
       // AI Cognitive Synthesis
       const cognitiveVerdict = await AICognitiveReasoner.reason({
@@ -412,7 +515,9 @@ async function handleToolCall(name, args) {
         },
         breakingChanges,
         hazards: hazardReport.hazards,
-        targetedTests: testResult.targeted_test_files
+        targetedTests: testResult.targeted_test_files,
+        forensicResult,
+        productionGates
       }, {
         enabled: args.enable_ai_reasoning !== false
       });
@@ -420,6 +525,8 @@ async function handleToolCall(name, args) {
       const fullReport = {
         project_architecture: projectArchitecture,
         executive_verdict: cognitiveVerdict,
+        production_readiness_gates: productionGates,
+        erp_forensic_audit: forensicResult,
         blast_radius: {
           total_affected_files: blastResult.total_affected_files,
           risk_score: blastResult.risk_score,
@@ -629,23 +736,36 @@ async function handleToolCall(name, args) {
         }
       }
 
+      const fileData = diffResult.files.map(f => ({
+        filePath: f.path,
+        oldContent: f.old_content || '',
+        newContent: f.new_content || '',
+        diff: f.diff || ''
+      }));
+
       // Check hazards
-      const hazardReport = DynamicHazardEvaluator.evaluateHazards(
-        diffResult.files.map(f => ({
-          filePath: f.path,
-          oldContent: f.old_content || '',
-          newContent: f.new_content || '',
-          diff: f.diff || ''
-        }))
-      );
+      const hazardReport = DynamicHazardEvaluator.evaluateHazards(fileData);
+
+      // Check ERP invariants and forensic gates
+      const forensicResult = ForensicAuditEngine.auditBugFix({
+        modifiedFiles: fileData,
+        repoPath
+      });
+      const productionGates = ProductionReadinessGate.evaluate({
+        forensicResult,
+        hazardReport,
+        breakingReport: { breaking_changes: breakingChanges }
+      });
 
       const maxRisk = args.max_risk_score !== undefined ? args.max_risk_score : 30.0;
       const exceedsRisk = blastResult.risk_score > maxRisk;
       const hasBreaking = breakingChanges.length > 0;
       const hasCriticalHazards = hazardReport.critical_hazards > 0;
+      const hasConfirmedERPIssues = forensicResult.confirmed_issues.length > 0;
+      const isGateBlocked = productionGates.overall_decision === 'BLOCKED_FAIL';
 
       const shouldFail = exceedsRisk ||
-                         (args.fail_on_breaking !== false && (hasBreaking || hasCriticalHazards));
+                         (args.fail_on_breaking !== false && (hasBreaking || hasCriticalHazards || hasConfirmedERPIssues || isGateBlocked));
 
       const status = shouldFail ? 'FAIL' : 'PASS';
 
@@ -653,6 +773,8 @@ async function handleToolCall(name, args) {
       if (exceedsRisk) blockingReasons.push(`Risk score (${blastResult.risk_score}) exceeds allowed threshold (${maxRisk}).`);
       if (hasBreaking) blockingReasons.push(`Detected ${breakingChanges.length} breaking signature change(s).`);
       if (hasCriticalHazards) blockingReasons.push(`Detected ${hazardReport.critical_hazards} critical runtime hazard(s).`);
+      if (hasConfirmedERPIssues) blockingReasons.push(`Detected ${forensicResult.confirmed_issues.length} confirmed ERP invariant/concurrency violation(s).`);
+      if (isGateBlocked) blockingReasons.push(`Production Readiness Gates blocked (${productionGates.failed_gates_count} failed gates).`);
 
       const response = {
         status,
@@ -662,9 +784,11 @@ async function handleToolCall(name, args) {
         total_affected_files: blastResult.total_affected_files,
         breaking_changes_count: breakingChanges.length,
         critical_hazards_count: hazardReport.critical_hazards,
+        confirmed_erp_issues_count: forensicResult.confirmed_issues.length,
+        failed_production_gates_count: productionGates.failed_gates_count,
         blocking_reasons: blockingReasons,
         recommendations: status === 'FAIL'
-          ? ['Review transitive blast radius files.', 'Address breaking changes or runtime hazards.', 'Run targeted test suite before committing.']
+          ? ['Review transitive blast radius files.', 'Address breaking changes, ERP invariant violations, or runtime hazards.', 'Run targeted test suite before committing.']
           : ['Safe to commit.']
       };
 
@@ -673,6 +797,180 @@ async function handleToolCall(name, args) {
           {
             type: 'text',
             text: JSON.stringify(response, null, 2)
+          }
+        ]
+      };
+    }
+
+    case 'cia_erp_forensic_audit': {
+      const diffResult = GitDiffAnalyzer.analyze({
+        repo_path: repoPath,
+        staged_only: args.staged_only,
+        raw_diff: args.raw_diff
+      });
+
+      const fileData = diffResult.has_changes ? diffResult.files.map(f => ({
+        filePath: f.path,
+        oldContent: f.old_content || '',
+        newContent: f.new_content || '',
+        diff: f.diff || ''
+      })) : [];
+
+      const targets = diffResult.files.map(f => ({
+        path: f.path,
+        symbols: f.changed_symbols
+      }));
+
+      const blastResult = diffResult.has_changes ? BlastRadiusEngine.compute({
+        targets,
+        repo_path: repoPath,
+        max_depth: args.max_depth || 3
+      }) : { risk_score: 0, severity: 'LOW', blast_radius: { origins: [], direct_dependents: [] }, paths: {}, mermaid_graph: '' };
+
+      const allAffectedFiles = [
+        ...blastResult.blast_radius.origins,
+        ...blastResult.blast_radius.direct_dependents
+      ];
+
+      const testResult = TestImpactSelector.select({
+        changed_files: allAffectedFiles,
+        repo_path: repoPath
+      });
+
+      const breakingChanges = [];
+      for (const f of diffResult.files) {
+        const bc = BreakingChangeDetector.detect({
+          old_code: f.old_content || '',
+          new_code: f.new_content || '',
+          file_path: f.path
+        });
+        if (bc.breaking_changes && bc.breaking_changes.length > 0) {
+          breakingChanges.push(...bc.breaking_changes);
+        }
+      }
+
+      const hazardReport = DynamicHazardEvaluator.evaluateHazards(fileData);
+
+      const forensicResult = ForensicAuditEngine.auditBugFix({
+        modifiedFiles: fileData,
+        bugContext: args.bug_context || {},
+        repoPath
+      });
+
+      const productionGates = ProductionReadinessGate.evaluate({
+        forensicResult,
+        hazardReport,
+        breakingReport: { breaking_changes: breakingChanges }
+      });
+
+      const auditData = {
+        forensicResult,
+        productionGates,
+        blastRadius: blastResult,
+        breakingChanges,
+        hazards: hazardReport.hazards,
+        targetedTests: testResult.targeted_test_files
+      };
+
+      if (args.format === 'json') {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(auditData, null, 2)
+            }
+          ]
+        };
+      }
+
+      const markdownReport = ForensicReportFormatter.formatMarkdown(auditData);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: markdownReport
+          }
+        ]
+      };
+    }
+
+    case 'cia_erp_invariants_check': {
+      const diffResult = GitDiffAnalyzer.analyze({
+        repo_path: repoPath,
+        staged_only: args.staged_only,
+        raw_diff: args.raw_diff
+      });
+
+      const fileData = diffResult.has_changes ? diffResult.files.map(f => ({
+        filePath: f.path,
+        oldContent: f.old_content || '',
+        newContent: f.new_content || '',
+        diff: f.diff || ''
+      })) : [];
+
+      const invariantReport = ERPInvariantAuditor.audit(fileData);
+      const concurrencyReport = ConcurrencyHazardAuditor.audit(fileData);
+
+      const response = {
+        invariants: invariantReport,
+        concurrency: concurrencyReport,
+        has_critical_hazards: invariantReport.confirmed_count > 0 || concurrencyReport.critical_hazards > 0,
+        status: (invariantReport.confirmed_count === 0 && concurrencyReport.critical_hazards === 0) ? 'PASS' : 'FAIL'
+      };
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(response, null, 2)
+          }
+        ]
+      };
+    }
+
+    case 'cia_production_gates': {
+      const diffResult = GitDiffAnalyzer.analyze({
+        repo_path: repoPath,
+        staged_only: args.staged_only !== false,
+        raw_diff: args.raw_diff
+      });
+
+      const fileData = diffResult.has_changes ? diffResult.files.map(f => ({
+        filePath: f.path,
+        oldContent: f.old_content || '',
+        newContent: f.new_content || '',
+        diff: f.diff || ''
+      })) : [];
+
+      const breakingChanges = [];
+      for (const f of diffResult.files) {
+        const bc = BreakingChangeDetector.detect({
+          old_code: f.old_content || '',
+          new_code: f.new_content || '',
+          file_path: f.path
+        });
+        if (bc.breaking_changes && bc.breaking_changes.length > 0) {
+          breakingChanges.push(...bc.breaking_changes);
+        }
+      }
+
+      const hazardReport = DynamicHazardEvaluator.evaluateHazards(fileData);
+      const forensicResult = ForensicAuditEngine.auditBugFix({
+        modifiedFiles: fileData,
+        repoPath
+      });
+
+      const productionGates = ProductionReadinessGate.evaluate({
+        forensicResult,
+        hazardReport,
+        breakingReport: { breaking_changes: breakingChanges }
+      });
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(productionGates, null, 2)
           }
         ]
       };

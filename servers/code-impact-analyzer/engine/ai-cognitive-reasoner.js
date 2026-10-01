@@ -97,7 +97,9 @@ export class AICognitiveReasoner {
       breakingChanges = [],
       hazards = [],
       targetedTests = [],
-      databaseImpact = {}
+      databaseImpact = {},
+      forensicResult = null,
+      productionGates = null
     } = context;
 
     const riskScore = blastRadius.risk_score ?? 0;
@@ -105,15 +107,21 @@ export class AICognitiveReasoner {
     let gateStatus = 'PASS';
     const actionItems = [];
 
+    const hasConfirmedERPIssues = (forensicResult?.confirmed_issues?.length || 0) > 0;
+    const isGateBlocked = productionGates?.overall_decision === 'BLOCKED_FAIL';
+
     // Evaluate Risk Gate
-    if (breakingChanges.length > 0 || hazards.some(h => h.severity === 'CRITICAL')) {
+    if (breakingChanges.length > 0 || hazards.some(h => h.severity === 'CRITICAL') || hasConfirmedERPIssues || isGateBlocked) {
       verdict = 'REJECT_BREAKING_CHANGES';
       gateStatus = 'FAIL';
+      if (hasConfirmedERPIssues) {
+        actionItems.push(`Resolve ${forensicResult.confirmed_issues.length} confirmed ERP invariant/concurrency violation(s) before deployment.`);
+      }
       actionItems.push('Address critical breaking contract changes and runtime hazards before deployment.');
-    } else if (riskScore > 65 || hazards.some(h => h.severity === 'HIGH')) {
+    } else if (riskScore > 65 || hazards.some(h => h.severity === 'HIGH') || productionGates?.overall_decision === 'REQUIRES_PEER_REVIEW') {
       verdict = 'REQUIRES_PEER_REVIEW';
       gateStatus = 'WARN';
-      actionItems.push('High blast radius or runtime hazards require senior developer approval and end-to-end staging validation.');
+      actionItems.push('High blast radius, ERP warnings, or runtime hazards require senior developer approval and end-to-end staging validation.');
     }
 
     if (targetedTests.length > 0) {
@@ -131,7 +139,7 @@ export class AICognitiveReasoner {
       verdict,
       gate_status: gateStatus,
       risk_score: riskScore,
-      summary: `Automated Symbolic Synthesis: Evaluated ${diffSummary.files_changed ?? 0} file(s). Found ${breakingChanges.length} breaking change(s), ${hazards.length} runtime hazard(s), and ${blastRadius.direct_callers_count ?? 0} affected callers across the dependency graph.`,
+      summary: `Automated Symbolic Synthesis: Evaluated ${diffSummary.files_changed ?? 0} file(s). Found ${breakingChanges.length} breaking change(s), ${hazards.length} runtime hazard(s), ${forensicResult?.confirmed_issues?.length || 0} confirmed ERP violation(s), and ${blastRadius.direct_callers_count ?? 0} affected callers across the dependency graph.`,
       architectural_impact: {
         blast_radius_magnitude: riskScore > 60 ? 'HIGH' : (riskScore > 30 ? 'MODERATE' : 'LOW'),
         database_affected_tables: databaseImpact.tables_affected ?? [],
@@ -225,6 +233,8 @@ Breaking Changes: ${JSON.stringify(context.breakingChanges || [])}
 Runtime Hazards: ${JSON.stringify(context.hazards || [])}
 Database Impact: ${JSON.stringify(context.databaseImpact || {})}
 Targeted Test Count: ${(context.targetedTests || []).length}
+ERP Forensics: ${JSON.stringify(context.forensicResult || {})}
+Production Gates: ${JSON.stringify(context.productionGates || {})}
 
 Output JSON format:
 {
