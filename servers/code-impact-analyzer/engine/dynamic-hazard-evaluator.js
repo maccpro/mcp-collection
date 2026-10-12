@@ -149,14 +149,19 @@ export class DynamicHazardEvaluator {
    * Detect multi-tenant isolation leaks
    */
   static _detectTenantIsolationHazard(filePath, newContent, diff, ast) {
+    if (ast && ast.category === 'test') return null;
+    if (filePath && (filePath.includes('/Tests/') || filePath.includes('\\Tests\\') || filePath.endsWith('Test.php'))) return null;
+
     const suspiciousPatterns = [
       { pattern: /withoutGlobalScope\s*\(\s*['"]tenant/i, reason: 'Explicit tenant global scope bypass' },
       { pattern: /withoutGlobalScopes\s*\(\s*\)/, reason: 'All global scopes bypassed including tenant isolation' },
       { pattern: /DB::table\s*\(\s*['"][a-zA-Z0-9_]+['"]\s*\)(?!.*tenant_id)/, reason: 'Direct raw DB query bypassing Eloquent multi-tenant model scope' }
     ];
 
+    const addedLines = diff ? diff.split('\n').filter(l => l.startsWith('+') && !l.startsWith('+++')).join('\n') : '';
+
     for (const p of suspiciousPatterns) {
-      if (p.pattern.test(diff) || p.pattern.test(newContent)) {
+      if (p.pattern.test(addedLines) || p.pattern.test(newContent)) {
         return {
           type: 'TENANT_ISOLATION_LEAK',
           severity: 'CRITICAL',

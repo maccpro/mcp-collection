@@ -9,6 +9,7 @@
  * and Graceful 100% Offline Fallback.
  */
 
+import fs from 'node:fs';
 import readline from 'node:readline';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,6 +37,33 @@ const __dirname = path.dirname(__filename);
 
 // Load .env if present
 loadEnv(__dirname);
+
+/**
+ * Dynamically discovers the repository root by walking upwards
+ */
+function findGitRoot(startPath) {
+  if (!startPath) return process.cwd();
+  let current = path.resolve(startPath);
+  try {
+    if (fs.existsSync(current) && fs.statSync(current).isFile()) {
+      current = path.dirname(current);
+    }
+  } catch {
+    return process.cwd();
+  }
+  const { root } = path.parse(current);
+  while (current && current !== root) {
+    if (
+      fs.existsSync(path.join(current, '.git')) ||
+      fs.existsSync(path.join(current, 'composer.json')) ||
+      fs.existsSync(path.join(current, 'package.json'))
+    ) {
+      return current;
+    }
+    current = path.dirname(current);
+  }
+  return path.resolve(startPath);
+}
 
 // MCP Tool Definitions
 const TOOLS = [
@@ -328,7 +356,7 @@ async function handleToolCall(name, args) {
   // Hot-reload .env so configuration updates take effect immediately without process restart
   loadEnv(__dirname, { override: true });
 
-  const repoPath = args.repo_path || process.cwd();
+  const repoPath = findGitRoot(args.repo_path || process.cwd());
 
   switch (name) {
     case 'cia_analyze_git_diff': {
@@ -697,17 +725,28 @@ async function handleToolCall(name, args) {
     }
 
     case 'cia_quality_gate': {
-      const diffResult = GitDiffAnalyzer.analyze({
+      let diffResult = GitDiffAnalyzer.analyze({
         repo_path: repoPath,
-        staged_only: args.staged_only !== false
+        staged_only: args.staged_only === true
       });
+
+      // If staged_only was requested or defaulted, but no staged changes found, check working tree (unstaged + untracked)
+      if (!diffResult.has_changes && args.staged_only !== false) {
+        const unstagedResult = GitDiffAnalyzer.analyze({
+          repo_path: repoPath,
+          staged_only: false
+        });
+        if (unstagedResult.has_changes) {
+          diffResult = unstagedResult;
+        }
+      }
 
       if (!diffResult.has_changes) {
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify({ status: 'PASS', message: 'No staged changes to gate.', risk_score: 0 }, null, 2)
+              text: JSON.stringify({ status: 'PASS', message: 'No changes (staged or unstaged) to gate.', risk_score: 0 }, null, 2)
             }
           ]
         };

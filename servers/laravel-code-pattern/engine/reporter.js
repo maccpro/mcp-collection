@@ -66,7 +66,8 @@ export class Reporter {
       isGatePassed,
       blockingViolations,
       warningViolations,
-      failOnWarnings
+      failOnWarnings,
+      includeWarnings: options.include_warnings || options.fail_on_warnings
     });
 
     return {
@@ -164,27 +165,37 @@ export class Reporter {
   /**
    * Build ready-to-dispatch high-fidelity prompt for MiMo
    */
+  /**
+   * Build ready-to-dispatch high-fidelity prompt for MiMo
+   */
   static buildMiMoRemediationPayload({
     isGatePassed,
-    blockingViolations,
-    warningViolations,
-    failOnWarnings
+    blockingViolations = [],
+    warningViolations = [],
+    failOnWarnings = false,
+    includeWarnings = false
   }) {
-    if (isGatePassed) {
+    const targetViolations = (failOnWarnings || includeWarnings)
+      ? [...blockingViolations, ...warningViolations]
+      : blockingViolations;
+
+    // If gate passed and warnings not requested, return null cleanly
+    if (isGatePassed && !includeWarnings) {
       return null;
     }
 
-    const targetViolations = failOnWarnings
-      ? [...blockingViolations, ...warningViolations]
-      : blockingViolations;
+    if (targetViolations.length === 0) {
+      return null;
+    }
 
     const targetFilesSet = new Set(targetViolations.map(v => v.file));
     const targetFiles = Array.from(targetFilesSet);
 
-    let prompt = `CRITICAL ARCHITECTURE GATE FAILURE:\n`;
-    prompt += `The previous code implementation violates the project's canonical architecture rules.\n`;
+    const isBlocking = blockingViolations.length > 0;
+    let prompt = isBlocking ? `CRITICAL ARCHITECTURE GATE FAILURE:\n` : `ARCHITECTURE WARNING AUDIT:\n`;
+    prompt += `The analyzed code exhibits architectural deviations from the canonical flow:\n`;
     prompt += `Canonical Flow: Controller -> FormRequest -> DTO -> Action -> Service (optional) -> RepositoryInterface -> Repository -> Model -> Database.\n\n`;
-    prompt += `Please strictly fix the following architectural violations:\n\n`;
+    prompt += `Please strictly refactor the following detected violations:\n\n`;
 
     targetViolations.forEach((v, idx) => {
       prompt += `${idx + 1}. [${v.severity}] File: ${v.file} (Line ${v.line})\n`;
@@ -214,6 +225,7 @@ export class Reporter {
     return {
       target_files: targetFiles,
       prompt_for_mimo: prompt,
+      violations_count: targetViolations.length,
       affected_snippets: targetViolations.map(v => ({
         file: v.file,
         line: v.line,

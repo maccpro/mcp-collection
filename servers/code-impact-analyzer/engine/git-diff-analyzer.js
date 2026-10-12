@@ -36,6 +36,46 @@ export class GitDiffAnalyzer {
 
     const parsedFiles = this._parseDiff(diffText, repoPath, params.staged_only);
 
+    // Dynamic discovery of untracked files (e.g. newly created PHP/schema files before git add)
+    if (!params.raw_diff && repoPath && !params.staged_only) {
+      const untracked = this._getUntrackedFiles(repoPath);
+      for (const uPath of untracked) {
+        const normalized = uPath.replace(/\\/g, '/');
+        if (!parsedFiles.some(f => f.path === normalized || f.path === uPath)) {
+          const fullPath = path.isAbsolute(uPath) ? uPath : path.join(repoPath, uPath);
+          let content = '';
+          try {
+            if (fs.existsSync(fullPath)) {
+              content = fs.readFileSync(fullPath, 'utf8');
+            }
+          } catch {}
+
+          if (content) {
+            const changedSymbols = [];
+            const lines = content.split(/\r?\n/);
+            for (const line of lines) {
+              const cm = line.match(/(?:class|interface|trait)\s+([a-zA-Z0-9_]+)/i);
+              if (cm && !changedSymbols.includes(cm[1])) changedSymbols.push(cm[1]);
+              const fm = line.match(/(?:public|protected|private)?\s+function\s+([a-zA-Z0-9_]+)\s*\(/i);
+              if (fm && !changedSymbols.includes(fm[1])) changedSymbols.push(fm[1]);
+            }
+
+            parsedFiles.push({
+              path: normalized,
+              old_path: normalized,
+              status: 'added',
+              category: this._categorizeFile(normalized),
+              hunks_count: 1,
+              changed_symbols: changedSymbols,
+              diff: `--- /dev/null\n+++ b/${normalized}\n` + lines.slice(0, 100).map(l => '+' + l).join('\n'),
+              old_content: '',
+              new_content: content
+            });
+          }
+        }
+      }
+    }
+
     return {
       has_changes: parsedFiles.length > 0,
       total_files_changed: parsedFiles.length,
@@ -68,13 +108,40 @@ export class GitDiffAnalyzer {
   }
 
   /**
+   * Dynamically discover untracked code files
+   */
+  static _getUntrackedFiles(repoPath) {
+    try {
+      const statusOutput = execSync('git status --porcelain', {
+        cwd: repoPath,
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'ignore']
+      }).split(/\r?\n/);
+
+      const untracked = [];
+      for (const line of statusOutput) {
+        if (line.startsWith('?? ')) {
+          const p = line.slice(3).trim();
+          if (p.endsWith('.php') || p.endsWith('.sql') || p.includes('migration')) {
+            untracked.push(p);
+          }
+        }
+      }
+      return untracked;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /**
    * Fetch old file content from git index or HEAD
    */
   static _getOldFileContent(repoPath, filePath, stagedOnly) {
     if (!repoPath || !filePath) return '';
     try {
       const ref = stagedOnly ? 'HEAD' : 'HEAD';
-      return execSync(`git show ${ref}:${filePath}`, {
+      const normalizedPath = filePath.replace(/\\/g, '/');
+      return execSync(`git show ${ref}:${normalizedPath}`, {
         cwd: repoPath,
         encoding: 'utf8',
         maxBuffer: 5 * 1024 * 1024,
@@ -90,9 +157,10 @@ export class GitDiffAnalyzer {
    */
   static _getNewFileContent(repoPath, filePath, stagedOnly) {
     if (!repoPath || !filePath) return '';
+    const normalizedPath = filePath.replace(/\\/g, '/');
     if (stagedOnly) {
       try {
-        return execSync(`git show :${filePath}`, {
+        return execSync(`git show :${normalizedPath}`, {
           cwd: repoPath,
           encoding: 'utf8',
           maxBuffer: 5 * 1024 * 1024,

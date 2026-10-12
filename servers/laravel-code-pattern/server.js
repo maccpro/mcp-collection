@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { execSync } from 'node:child_process';
 
 import { StaticAnalyzer } from './engine/static-analyzer.js';
 import { RulesEvaluator, RULE_DEFINITIONS } from './engine/rules.js';
@@ -27,13 +28,13 @@ let BASE_CONFIG = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 const TOOLS = [
   {
     name: 'architecture_gate',
-    description: 'Compact PASS/FAIL architecture quality gate for Antigravity & MiMo loops. Validates changed files against the canonical flow (Controller -> FormRequest -> DTO -> Action -> optional Service -> RepositoryInterface -> Repository -> Model -> Database) without calling an LLM. Returns blocking findings, executive summary markdown, and a focused remediation payload for MiMo if failed.',
+    description: 'Compact PASS/FAIL architecture quality gate for Antigravity & MiMo loops. Validates changed files against the canonical flow (Controller -> FormRequest -> DTO -> Action -> optional Service -> RepositoryInterface -> Repository -> Model -> Database) without calling an LLM. Automatically discovers modified and untracked Git files if files argument is omitted.',
     inputSchema: {
       type: 'object',
       properties: {
         files: {
           type: 'array',
-          description: 'Array of file paths or file objects ({ path: string, content?: string }) to analyze.',
+          description: 'Optional array of file paths or file objects to analyze (defaults to auto-discovering modified and untracked PHP files from Git).',
           items: {
             anyOf: [
               { type: 'string' },
@@ -52,6 +53,10 @@ const TOOLS = [
           type: 'boolean',
           description: 'Whether warnings should also block the quality gate (default: false).'
         },
+        include_warnings: {
+          type: 'boolean',
+          description: 'Whether to include warnings in the MiMo remediation payload (default: false).'
+        },
         workspace_path: {
           type: 'string',
           description: 'Optional path to the project root or workspace.'
@@ -60,8 +65,33 @@ const TOOLS = [
           type: 'boolean',
           description: 'Enable strict architectural gate enforcement.'
         }
+      }
+    }
+  },
+  {
+    name: 'architecture_remediate_mimo',
+    description: 'Invokes Xiaomi MiMo (or configured fallback LLM) to automatically refactor non-compliant Laravel PHP code into canonical clean architecture classes (Controller -> FormRequest -> DTO -> Action -> RepositoryInterface).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file_path: {
+          type: 'string',
+          description: 'Path of the violating PHP file to refactor.'
+        },
+        code: {
+          type: 'string',
+          description: 'Optional file content (auto-read from disk if omitted).'
+        },
+        violations: {
+          type: 'array',
+          description: 'Optional array of detected violations (auto-scanned if omitted).'
+        },
+        workspace_path: {
+          type: 'string',
+          description: 'Optional project root path.'
+        }
       },
-      required: ['files']
+      required: ['file_path']
     }
   },
   {
@@ -174,6 +204,49 @@ const TOOLS = [
 ];
 
 /**
+ * Dynamically discovers modified, added, and untracked PHP files in git repository
+ */
+function discoverChangedPhpFiles(projectRoot) {
+  const discovered = new Set();
+  try {
+    const diffFiles = execSync('git diff --name-only HEAD', {
+      cwd: projectRoot,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'ignore']
+    }).split(/\r?\n/).filter(f => f.trim().endsWith('.php'));
+    diffFiles.forEach(f => discovered.add(path.resolve(projectRoot, f.trim())));
+  } catch (e) {
+    try {
+      const diffUnstaged = execSync('git diff --name-only', {
+        cwd: projectRoot,
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'ignore']
+      }).split(/\r?\n/).filter(f => f.trim().endsWith('.php'));
+      diffUnstaged.forEach(f => discovered.add(path.resolve(projectRoot, f.trim())));
+    } catch {}
+  }
+
+  try {
+    const statusOutput = execSync('git status --porcelain', {
+      cwd: projectRoot,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'ignore']
+    }).split(/\r?\n/);
+    for (const line of statusOutput) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const parts = trimmed.split(/\s+/);
+      const filePath = parts[parts.length - 1];
+      if (filePath && filePath.endsWith('.php')) {
+        discovered.add(path.resolve(projectRoot, filePath));
+      }
+    }
+  } catch (e) {}
+
+  return Array.from(discovered);
+}
+
+/**
  * Normalizes input files, executes static AST tokenization, runs rule evaluations,
  * and constructs the in-memory Relational Architecture Graph.
  */
@@ -187,9 +260,11 @@ function processInputFiles(filesInput, projectRoot = process.cwd(), activeConfig
 
     if (typeof item === 'string') {
       filePath = item;
+      const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(projectRoot, filePath);
       try {
-        if (fs.existsSync(filePath)) {
-          content = fs.readFileSync(filePath, 'utf8');
+        if (fs.existsSync(resolvedPath)) {
+          content = fs.readFileSync(resolvedPath, 'utf8');
+          filePath = resolvedPath;
         }
       } catch (e) {
         // Skip unreadable files
@@ -197,10 +272,14 @@ function processInputFiles(filesInput, projectRoot = process.cwd(), activeConfig
     } else if (item && typeof item === 'object') {
       filePath = item.path || '';
       content = item.content || '';
-      if (!content && fs.existsSync(filePath)) {
-        try {
-          content = fs.readFileSync(filePath, 'utf8');
-        } catch (e) {}
+      if (!content) {
+        const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(projectRoot, filePath);
+        if (fs.existsSync(resolvedPath)) {
+          try {
+            content = fs.readFileSync(resolvedPath, 'utf8');
+            filePath = resolvedPath;
+          } catch (e) {}
+        }
       }
     }
 
@@ -244,7 +323,11 @@ async function handleToolCall(name, args) {
 
   // 1. architecture_gate
   if (name === 'architecture_gate') {
-    const rawFiles = args.files || [];
+    let rawFiles = args.files || [];
+    if (!Array.isArray(rawFiles) || rawFiles.length === 0) {
+      rawFiles = discoverChangedPhpFiles(projectProfile.projectRoot);
+    }
+
     const { parsedFiles, allViolations, relationalGraph } = processInputFiles(rawFiles, projectProfile.projectRoot, activeConfig);
     const duration = Date.now() - startTime;
 
@@ -253,7 +336,10 @@ async function handleToolCall(name, args) {
       violations: allViolations,
       scanDurationMs: duration,
       config: activeConfig,
-      options: { fail_on_warnings: args.fail_on_warnings || args.strict_mode },
+      options: {
+        fail_on_warnings: args.fail_on_warnings || args.strict_mode,
+        include_warnings: args.include_warnings
+      },
       relationalGraph
     });
 
@@ -268,6 +354,42 @@ async function handleToolCall(name, args) {
         {
           type: 'text',
           text: JSON.stringify(report, null, 2)
+        }
+      ]
+    };
+  }
+
+  // architecture_remediate_mimo
+  if (name === 'architecture_remediate_mimo') {
+    const rawPath = args.file_path;
+    const resolvedPath = path.isAbsolute(rawPath) ? rawPath : path.resolve(projectProfile.projectRoot, rawPath);
+    let code = args.code;
+    if (!code && fs.existsSync(resolvedPath)) {
+      code = fs.readFileSync(resolvedPath, 'utf8');
+    }
+    if (!code) {
+      throw new Error(`Unable to read code from ${resolvedPath}`);
+    }
+
+    let violations = args.violations;
+    if (!violations || violations.length === 0) {
+      const { allViolations } = processInputFiles([{ path: resolvedPath, content: code }], projectProfile.projectRoot, activeConfig);
+      violations = allViolations;
+    }
+
+    const remediationResult = await SemanticReviewer.remediate({
+      filePath: resolvedPath,
+      code,
+      violations,
+      prompt: `Please refactor this Laravel file strictly adhering to Clean Architecture rules.`,
+      config: activeConfig
+    });
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(remediationResult, null, 2)
         }
       ]
     };

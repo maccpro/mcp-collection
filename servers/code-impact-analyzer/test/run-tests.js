@@ -853,6 +853,23 @@ await runTest('ForensicReportFormatter: generates complete 29-section Markdown r
   assert.ok(md.includes('## 29. Final Evidence Summary'));
 });
 
+await runTest('GitDiffAnalyzer: cross-platform path normalization and untracked file helpers', () => {
+  const winPath = 'app\\Services\\PaymentService.php';
+  const normalized = winPath.replace(/\\/g, '/');
+  assert.strictEqual(normalized, 'app/Services/PaymentService.php');
+  assert.strictEqual(GitDiffAnalyzer._categorizeFile(winPath), 'service');
+});
+
+await runTest('AICognitiveReasoner: deterministic offline fallback when API key is null or disabled', async () => {
+  const result = await AICognitiveReasoner.reason({
+    diffSummary: { files_changed: 1 },
+    blastRadius: { risk_score: 10, severity: 'LOW' }
+  }, { enabled: false });
+
+  assert.strictEqual(result.mode, 'deterministic_symbolic_synthesis');
+  assert.strictEqual(result.gate_status, 'PASS');
+});
+
 console.log(`\n--- Test Results: ${passed} Passed, ${failed} Failed ---\n`);
 
 if (failed > 0) {

@@ -26,13 +26,26 @@ export class ProjectIntrospector {
 
     const { root } = path.parse(current);
     while (current && current !== root) {
-      if (fs.existsSync(path.join(current, 'artisan')) || fs.existsSync(path.join(current, 'composer.json'))) {
+      if (
+        fs.existsSync(path.join(current, 'artisan')) ||
+        fs.existsSync(path.join(current, 'composer.json')) ||
+        fs.existsSync(path.join(current, '.git')) ||
+        fs.existsSync(path.join(current, 'package.json'))
+      ) {
         return current;
       }
       current = path.dirname(current);
     }
 
-    return null;
+    if (
+      fs.existsSync(path.join(root, 'artisan')) ||
+      fs.existsSync(path.join(root, 'composer.json')) ||
+      fs.existsSync(path.join(root, '.git'))
+    ) {
+      return root;
+    }
+
+    return path.resolve(startPath);
   }
 
   /**

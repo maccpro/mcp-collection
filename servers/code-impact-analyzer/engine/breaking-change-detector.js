@@ -19,8 +19,8 @@ export class BreakingChangeDetector {
   static detect(params) {
     const { file_path = 'file.php', old_code = '', new_code = '' } = params;
 
-    // Only PHP source files have PHP class contracts and signatures
-    if (file_path && !file_path.endsWith('.php')) {
+    // Only PHP source files (excluding Blade templates) have PHP class contracts and signatures
+    if (file_path && (!file_path.endsWith('.php') || file_path.endsWith('.blade.php'))) {
       return {
         success: true,
         file: file_path,
@@ -271,6 +271,8 @@ export class BreakingChangeDetector {
    * Check if public constants were deleted
    */
   static _checkConstantRemovals(oldCode, newCode, issues) {
+    if (!oldCode.includes('class ') && !oldCode.includes('interface ') && !oldCode.includes('enum ')) return;
+
     const constRegex = /(?:public\s+)?const\s+([a-zA-Z0-9_]+)/g;
     let m;
     while ((m = constRegex.exec(oldCode)) !== null) {

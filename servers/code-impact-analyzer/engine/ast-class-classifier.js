@@ -26,6 +26,23 @@ export class ASTClassClassifier {
     let isTenantAware = false;
     let isDatabaseEntity = false;
 
+    // 0. Test Suites & Fixtures
+    if (
+      parentClass === 'TestCase' ||
+      (parentClass && parentClass.endsWith('TestCase')) ||
+      (filePath && (filePath.includes('/Tests/') || filePath.includes('\\Tests\\') || filePath.includes('/tests/') || filePath.includes('\\tests\\') || filePath.endsWith('Test.php')))
+    ) {
+      return {
+        category: 'test',
+        parent_class: parentClass,
+        contracts,
+        traits,
+        is_async_queue: false,
+        is_tenant_aware: true,
+        is_database_entity: false
+      };
+    }
+
     // 1. Eloquent Models & Database Entities
     if (
       parentClass === 'Model' ||

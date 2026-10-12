@@ -22,12 +22,47 @@ export class AICognitiveReasoner {
 
     try {
       return await this._callLLMReasoner(analysisContext, config);
-    } catch (err) {
+    } catch (primaryErr) {
+      // Try fallback provider if available
+      const fallbackConfig = this._resolveFallbackConfig(options);
+      if (fallbackConfig && fallbackConfig.apiKey && fallbackConfig.apiKey !== config.apiKey) {
+        try {
+          return await this._callLLMReasoner(analysisContext, fallbackConfig);
+        } catch (fallbackErr) {
+          // Graceful fallback to deterministic offline synthesis
+          const offlineResult = this._executeDeterministicOfflineSynthesis(analysisContext);
+          offlineResult.ai_fallback_reason = `Primary (${primaryErr.message}) and Fallback (${fallbackErr.message}) failed. Defaulted to deterministic symbolic synthesis.`;
+          return offlineResult;
+        }
+      }
+
       // Graceful fallback to deterministic offline synthesis on network/API failure
       const offlineResult = this._executeDeterministicOfflineSynthesis(analysisContext);
-      offlineResult.ai_fallback_reason = `AI Provider request failed (${err.message}). Defaulted to deterministic symbolic synthesis.`;
+      offlineResult.ai_fallback_reason = `AI Provider request failed (${primaryErr.message}). Defaulted to deterministic symbolic synthesis.`;
       return offlineResult;
     }
+  }
+
+  /**
+   * Resolve fallback provider configuration
+   */
+  static _resolveFallbackConfig(options = {}) {
+    const apiKey = process.env.CIA_FALLBACK_API_KEY || process.env.DEEPSEEK_API_KEY || null;
+    if (!apiKey) return null;
+
+    const apiBase = process.env.CIA_FALLBACK_API_BASE || 'https://api.deepseek.com/v1';
+    const model = process.env.CIA_FALLBACK_MODEL || 'deepseek-v4-flash';
+
+    return {
+      enabled: true,
+      apiKey,
+      apiBase: apiBase.replace(/\/+$/, ''),
+      model,
+      provider: 'deepseek_fallback',
+      thinking: 'disabled',
+      temperature: 0.2,
+      max_tokens: 1200
+    };
   }
 
   /**
@@ -38,6 +73,7 @@ export class AICognitiveReasoner {
     const apiKey = options.apiKey ||
                    process.env.CIA_API_KEY ||
                    process.env.MIMO_API_KEY ||
+                   process.env.BACKEND_API_KEY ||
                    process.env.OPENAI_API_KEY ||
                    process.env.DEEPSEEK_API_KEY ||
                    process.env.GROQ_API_KEY ||
@@ -56,14 +92,14 @@ export class AICognitiveReasoner {
     let provider = options.provider || process.env.CIA_AI_PROVIDER || 'auto';
 
     if (provider === 'auto') {
-      if (apiBase?.includes('xiaomimimo') || model?.includes('mimo') || process.env.MIMO_API_KEY) {
+      if (apiBase?.includes('xiaomimimo') || model?.includes('mimo') || process.env.MIMO_API_KEY || apiKey?.startsWith('tp-')) {
         provider = 'mimo';
         apiBase = apiBase || 'https://token-plan-sgp.xiaomimimo.com/v1';
         model = model || 'mimo-v2.6-pro';
       } else if (apiBase?.includes('deepseek') || model?.includes('deepseek') || process.env.DEEPSEEK_API_KEY) {
         provider = 'deepseek';
         apiBase = apiBase || 'https://api.deepseek.com/v1';
-        model = model || 'deepseek-v4-pro';
+        model = model || 'deepseek-v4-flash';
       } else if (process.env.GROQ_API_KEY) {
         provider = 'groq';
         apiBase = apiBase || 'https://api.groq.com/openai/v1';
@@ -73,13 +109,16 @@ export class AICognitiveReasoner {
         apiBase = apiBase || 'https://api.openai.com/v1';
         model = model || 'gpt-4o-mini';
       }
+    } else if (provider === 'mimo') {
+      apiBase = apiBase || 'https://token-plan-sgp.xiaomimimo.com/v1';
+      model = model || 'mimo-v2.6-pro';
     }
 
     return {
       enabled,
       apiKey,
       apiBase: apiBase?.replace(/\/+$/, '') || 'https://api.openai.com/v1',
-      model,
+      model: model || 'mimo-v2.6-pro',
       provider,
       thinking: thinkingEnabled ? 'enabled' : 'disabled',
       temperature: options.temperature ?? 0.2,
@@ -178,14 +217,23 @@ export class AICognitiveReasoner {
     }
 
     const endpoint = `${config.apiBase}/chat/completions`;
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.apiKey}`
-      },
-      body: JSON.stringify(payload)
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    let response;
+    try {
+      response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.apiKey}`
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!response.ok) {
       const errText = await response.text();

@@ -372,4 +372,39 @@ assert.strictEqual(parsedResource.layer, 'Resource');
 assert.strictEqual(parsedDTO.layer, 'DTO');
 console.log('✅ Test 13 Passed: 14 Architectural layers correctly detected.');
 
-console.log('\n🎉 ALL 13 COMPREHENSIVE ENTERPRISE QUALITY GATE TESTS PASSED! 🎉\n');
+// ---------------------------------------------------------
+// Test 14: Dynamic Warning Remediation Payload Generation
+// ---------------------------------------------------------
+const warningOnlyViolations = [
+  {
+    id: 'controller_business_logic',
+    file: 'app/Http/Controllers/UserController.php',
+    line: 25,
+    rule: 'controller_business_logic',
+    severity: 'WARNING',
+    message: 'Controller method contains heavy domain logic.',
+    fix: 'Decompose into a dedicated Action class.',
+    snippet: 'foreach ($items as $item) { ... }'
+  }
+];
+
+const reportWithoutWarnings = Reporter.generateReport({
+  filesAnalyzed: [{ filePath: 'app/Http/Controllers/UserController.php', layer: 'Controller' }],
+  violations: warningOnlyViolations,
+  options: { include_warnings: false }
+});
+assert.strictEqual(reportWithoutWarnings.status, 'PASS');
+assert.strictEqual(reportWithoutWarnings.mimo_remediation_payload, null, 'Should return null when include_warnings is false and gate passes');
+
+const reportWithWarnings = Reporter.generateReport({
+  filesAnalyzed: [{ filePath: 'app/Http/Controllers/UserController.php', layer: 'Controller' }],
+  violations: warningOnlyViolations,
+  options: { include_warnings: true }
+});
+assert.ok(reportWithWarnings.mimo_remediation_payload !== null, 'Should generate remediation payload when include_warnings is true');
+assert.strictEqual(reportWithWarnings.mimo_remediation_payload.violations_count, 1);
+assert.ok(reportWithWarnings.mimo_remediation_payload.prompt_for_mimo.includes('controller_business_logic'));
+console.log('✅ Test 14 Passed: Dynamic warning remediation payload generation verified.');
+
+console.log('\n🎉 ALL 14 COMPREHENSIVE ENTERPRISE QUALITY GATE TESTS PASSED! 🎉\n');
+
