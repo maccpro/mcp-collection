@@ -35,6 +35,22 @@ loadEnv(__dirname);
 // Connected Environment Defaults
 const DEFAULT_DIALECT = process.env.DB_DEFAULT_DIALECT || process.env.DEFAULT_DATABASE_DIALECT || 'mariadb';
 const DEFAULT_SCOPE = process.env.DB_MIGRATION_SCOPE || process.env.DEFAULT_MIGRATION_SCOPE || 'standard';
+const DEFAULT_ID_STRATEGY = process.env.DB_DEFAULT_ID_STRATEGY || 'id';
+const DEFAULT_DATABASE_NAME = process.env.DB_DEFAULT_DATABASE_NAME || 'app_production';
+const DEFAULT_STAGING_DB_NAME = process.env.DB_DEFAULT_STAGING_DB_NAME || 'app_staging';
+const DEFAULT_RAM_GB = parseInt(process.env.DB_SERVER_RAM_GB || '4', 10);
+const DEFAULT_VCPU = parseInt(process.env.DB_SERVER_VCPU || '4', 10);
+const DEFAULT_DISK_TYPE = process.env.DB_SERVER_DISK_TYPE || 'nvme';
+const DEFAULT_WORKLOAD = process.env.DB_SERVER_WORKLOAD || 'oltp';
+const DEFAULT_ENVIRONMENT = process.env.DB_SERVER_ENVIRONMENT || 'dedicated';
+const DEFAULT_POOLER = process.env.DB_DEFAULT_POOLER || 'pgbouncer';
+const DEFAULT_POOLER_MAX_CONN = parseInt(process.env.DB_POOLER_MAX_CLIENT_CONNECTIONS || '2000', 10);
+const DEFAULT_DB_HOST = process.env.DB_TARGET_HOST || '127.0.0.1';
+const DEFAULT_LOCK_AUDIT_ROWS = parseInt(process.env.DB_LOCK_AUDIT_ROW_THRESHOLD || '100000', 10);
+const DEFAULT_SEEDER_COUNT = parseInt(process.env.DB_SEEDER_RECORD_COUNT || '50', 10);
+const DEFAULT_PARTITION_TYPE = process.env.DB_PARTITION_DEFAULT_TYPE || 'range';
+const DEFAULT_PARTITION_INTERVAL = process.env.DB_PARTITION_DEFAULT_INTERVAL || 'monthly';
+const DEFAULT_WORKSPACE_PATH = process.env.DB_WORKSPACE_PATH || undefined;
 
 // MCP Tool Definitions
 const TOOLS = [
@@ -84,7 +100,7 @@ const TOOLS = [
             { type: 'string', enum: ['id', 'uuid', 'ulid', 'none'] },
             { type: 'array', items: { type: 'string' } }
           ],
-          default: 'id',
+          default: DEFAULT_ID_STRATEGY,
           description: 'Primary key strategy or array of column names for composite primary keys (pivot tables).'
         },
         include_tenant_id: {
@@ -239,7 +255,7 @@ const TOOLS = [
         primary_key_type: {
           type: 'string',
           enum: ['id', 'uuid', 'ulid'],
-          default: 'id',
+          default: DEFAULT_ID_STRATEGY,
           description: 'Primary key convention.'
         }
       },
@@ -279,7 +295,7 @@ const TOOLS = [
         },
         estimated_rows: {
           type: 'number',
-          default: 100000,
+          default: DEFAULT_LOCK_AUDIT_ROWS,
           description: 'Estimated row count of the table in production.'
         }
       },
@@ -294,29 +310,30 @@ const TOOLS = [
       properties: {
         ram_gb: {
           type: 'number',
+          default: DEFAULT_RAM_GB,
           description: 'Total server RAM in Gigabytes (e.g. 4, 8, 16, 32, 64).'
         },
         vcpu: {
           type: 'number',
-          default: 4,
+          default: DEFAULT_VCPU,
           description: 'Number of vCPU cores.'
         },
         disk_type: {
           type: 'string',
           enum: ['nvme', 'sata_ssd', 'hdd'],
-          default: 'nvme',
+          default: DEFAULT_DISK_TYPE,
           description: 'Primary storage drive type.'
         },
         workload: {
           type: 'string',
           enum: ['oltp', 'data_warehouse', 'mixed'],
-          default: 'oltp',
+          default: DEFAULT_WORKLOAD,
           description: 'Workload pattern.'
         },
         server_type: {
           type: 'string',
           enum: ['dedicated', 'shared'],
-          default: 'dedicated',
+          default: DEFAULT_ENVIRONMENT,
           description: 'Whether the database server is dedicated or shared with Nginx/PHP-FPM.'
         },
         dialect: {
@@ -325,8 +342,7 @@ const TOOLS = [
           default: DEFAULT_DIALECT,
           description: 'Target database system.'
         }
-      },
-      required: ['ram_gb']
+      }
     }
   },
   {
@@ -367,7 +383,7 @@ const TOOLS = [
         dialect: {
           type: 'string',
           enum: ['postgresql', 'mariadb', 'mysql', 'sqlite'],
-          default: 'postgresql',
+          default: DEFAULT_DIALECT,
           description: 'Database system dialect.'
         },
         table: {
@@ -386,7 +402,7 @@ const TOOLS = [
       properties: {
         database_name: {
           type: 'string',
-          default: 'app_production',
+          default: DEFAULT_DATABASE_NAME,
           description: 'Target database name.'
         },
         dialect: {
@@ -406,6 +422,7 @@ const TOOLS = [
       properties: {
         workspace_path: {
           type: 'string',
+          default: DEFAULT_WORKSPACE_PATH,
           description: 'Root path of the repository/workspace to scan.'
         },
         files: {
@@ -425,27 +442,27 @@ const TOOLS = [
         pooler: {
           type: 'string',
           enum: ['pgbouncer', 'proxysql'],
-          default: 'pgbouncer',
+          default: DEFAULT_POOLER,
           description: 'Target connection pooler system.'
         },
         max_client_connections: {
           type: 'number',
-          default: 2000,
+          default: DEFAULT_POOLER_MAX_CONN,
           description: 'Maximum expected concurrent client connections.'
         },
         vcpu: {
           type: 'number',
-          default: 4,
+          default: DEFAULT_VCPU,
           description: 'Database server vCPU core count.'
         },
         db_host: {
           type: 'string',
-          default: '127.0.0.1',
+          default: DEFAULT_DB_HOST,
           description: 'Underlying target database server IP or hostname.'
         },
         database_name: {
           type: 'string',
-          default: 'app_production',
+          default: DEFAULT_DATABASE_NAME,
           description: 'Target primary application database name.'
         }
       }
@@ -465,7 +482,7 @@ const TOOLS = [
         },
         database_name: {
           type: 'string',
-          default: 'app_staging',
+          default: DEFAULT_STAGING_DB_NAME,
           description: 'Target database name to sanitize.'
         }
       }
@@ -500,7 +517,7 @@ const TOOLS = [
         },
         count: {
           type: 'number',
-          default: 50,
+          default: DEFAULT_SEEDER_COUNT,
           description: 'Number of sample records to generate in seeder.'
         },
         is_tenant: {
@@ -525,7 +542,7 @@ const TOOLS = [
         partition_type: {
           type: 'string',
           enum: ['range', 'list'],
-          default: 'range',
+          default: DEFAULT_PARTITION_TYPE,
           description: 'Partition strategy: "range" (by timestamp/date) or "list" (by tenant_id/region).'
         },
         partition_column: {
@@ -536,13 +553,13 @@ const TOOLS = [
         dialect: {
           type: 'string',
           enum: ['postgresql', 'mariadb', 'mysql', 'sqlite'],
-          default: 'postgresql',
+          default: DEFAULT_DIALECT,
           description: 'Target database engine.'
         },
         interval: {
           type: 'string',
           enum: ['monthly', 'yearly'],
-          default: 'monthly',
+          default: DEFAULT_PARTITION_INTERVAL,
           description: 'Partition time bucket interval.'
         }
       },
@@ -603,70 +620,139 @@ const PROMPTS = [
 /**
  * Handle MCP Tool Call
  */
-async function handleToolCall(name, args) {
+async function handleToolCall(name, args = {}) {
   switch (name) {
     case 'db_generate_migration': {
-      const result = MigrationEngine.generate(args);
+      const merged = {
+        database_type: args.database_type || args.dialect || DEFAULT_DIALECT,
+        scope: args.scope || DEFAULT_SCOPE,
+        primary_key: args.primary_key || DEFAULT_ID_STRATEGY,
+        ...args
+      };
+      const result = MigrationEngine.generate(merged);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 
     case 'db_analyze_query': {
-      const result = QueryAnalyzer.analyze(args);
+      const merged = {
+        dialect: args.dialect || DEFAULT_DIALECT,
+        ...args
+      };
+      const result = QueryAnalyzer.analyze(merged);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 
     case 'db_design_schema': {
-      const result = SchemaModeler.design(args);
+      const merged = {
+        dialect: args.dialect || DEFAULT_DIALECT,
+        primary_key_type: args.primary_key_type || args.primary_key_strategy || DEFAULT_ID_STRATEGY,
+        ...args
+      };
+      const result = SchemaModeler.design(merged);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 
     case 'db_migration_audit': {
-      const result = LockAuditor.audit(args);
+      const merged = {
+        dialect: args.dialect || DEFAULT_DIALECT,
+        estimated_rows: args.estimated_rows !== undefined ? args.estimated_rows : DEFAULT_LOCK_AUDIT_ROWS,
+        ...args
+      };
+      const result = LockAuditor.audit(merged);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 
     case 'db_tune_server_config': {
-      const result = ConfigTuner.tune(args);
+      const merged = {
+        dialect: args.dialect || DEFAULT_DIALECT,
+        ram_gb: args.ram_gb !== undefined ? args.ram_gb : DEFAULT_RAM_GB,
+        vcpu: args.vcpu !== undefined ? args.vcpu : DEFAULT_VCPU,
+        disk_type: args.disk_type || DEFAULT_DISK_TYPE,
+        workload: args.workload || DEFAULT_WORKLOAD,
+        server_type: args.server_type || DEFAULT_ENVIRONMENT,
+        ...args
+      };
+      const result = ConfigTuner.tune(merged);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 
     case 'db_maintenance_runbook': {
-      const result = MaintenanceEngine.getRunbook(args);
+      const merged = {
+        dialect: args.dialect || DEFAULT_DIALECT,
+        ...args
+      };
+      const result = MaintenanceEngine.getRunbook(merged);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 
     case 'db_explain_analyzer': {
-      const result = ExplainAnalyzer.analyze(args);
+      const merged = {
+        dialect: args.dialect || DEFAULT_DIALECT,
+        ...args
+      };
+      const result = ExplainAnalyzer.analyze(merged);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 
     case 'db_backup_restore_runbook': {
-      const result = MaintenanceEngine.getBackupRunbook(args);
+      const merged = {
+        dialect: args.dialect || DEFAULT_DIALECT,
+        database_name: args.database_name || DEFAULT_DATABASE_NAME,
+        ...args
+      };
+      const result = MaintenanceEngine.getBackupRunbook(merged);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 
     case 'db_quality_gate': {
-      const result = QualityGate.evaluate(args);
+      const merged = {
+        workspace_path: args.workspace_path || DEFAULT_WORKSPACE_PATH,
+        ...args
+      };
+      const result = QualityGate.evaluate(merged);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 
     case 'db_tune_connection_pooler': {
-      const result = ConfigTuner.tunePooler(args);
+      const merged = {
+        pooler: args.pooler || DEFAULT_POOLER,
+        max_client_connections: args.max_client_connections !== undefined ? args.max_client_connections : DEFAULT_POOLER_MAX_CONN,
+        vcpu: args.vcpu !== undefined ? args.vcpu : DEFAULT_VCPU,
+        db_host: args.db_host || DEFAULT_DB_HOST,
+        database_name: args.database_name || DEFAULT_DATABASE_NAME,
+        ...args
+      };
+      const result = ConfigTuner.tunePooler(merged);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 
     case 'db_data_masking_runbook': {
-      const result = MaintenanceEngine.getDataMaskingRunbook(args);
+      const merged = {
+        dialect: args.dialect || DEFAULT_DIALECT,
+        database_name: args.database_name || DEFAULT_STAGING_DB_NAME,
+        ...args
+      };
+      const result = MaintenanceEngine.getDataMaskingRunbook(merged);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 
     case 'db_generate_seeder_factory': {
-      const result = SeederGenerator.generate(args);
+      const merged = {
+        count: args.count !== undefined ? args.count : DEFAULT_SEEDER_COUNT,
+        ...args
+      };
+      const result = SeederGenerator.generate(merged);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 
     case 'db_partitioning_advisor': {
-      const result = PartitionAdvisor.advise(args);
+      const merged = {
+        dialect: args.dialect || DEFAULT_DIALECT,
+        partition_type: args.partition_type || DEFAULT_PARTITION_TYPE,
+        interval: args.interval || DEFAULT_PARTITION_INTERVAL,
+        ...args
+      };
+      const result = PartitionAdvisor.advise(merged);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 
@@ -675,18 +761,21 @@ async function handleToolCall(name, args) {
   }
 }
 
-// Stdio JSON-RPC 2.0 Server Setup
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-  terminal: false
-});
+// Stdio JSON-RPC 2.0 Server Setup (only start readline when run directly)
+const isDirectRun = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 
-function sendResponse(response) {
-  process.stdout.write(JSON.stringify(response) + '\n');
-}
+if (isDirectRun) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: false
+  });
 
-rl.on('line', async (line) => {
+  function sendResponse(response) {
+    process.stdout.write(JSON.stringify(response) + '\n');
+  }
+
+  rl.on('line', async (line) => {
   const trimmed = line.trim();
   if (!trimmed) return;
 
@@ -725,7 +814,7 @@ rl.on('line', async (line) => {
             },
             serverInfo: {
               name: 'database-mcp',
-              version: '1.2.2'
+              version: '1.2.3'
             }
           }
         });
@@ -916,3 +1005,29 @@ rl.on('line', async (line) => {
     });
   }
 });
+}
+
+export {
+  handleToolCall,
+  TOOLS,
+  RESOURCES,
+  PROMPTS,
+  DEFAULT_DIALECT,
+  DEFAULT_SCOPE,
+  DEFAULT_ID_STRATEGY,
+  DEFAULT_DATABASE_NAME,
+  DEFAULT_STAGING_DB_NAME,
+  DEFAULT_RAM_GB,
+  DEFAULT_VCPU,
+  DEFAULT_DISK_TYPE,
+  DEFAULT_WORKLOAD,
+  DEFAULT_ENVIRONMENT,
+  DEFAULT_POOLER,
+  DEFAULT_POOLER_MAX_CONN,
+  DEFAULT_DB_HOST,
+  DEFAULT_LOCK_AUDIT_ROWS,
+  DEFAULT_SEEDER_COUNT,
+  DEFAULT_PARTITION_TYPE,
+  DEFAULT_PARTITION_INTERVAL,
+  DEFAULT_WORKSPACE_PATH
+};

@@ -1,9 +1,10 @@
 /**
  * @file run-tests.js
- * @description Enterprise Test Suite for @maccpro/database-mcp (v1.2.2)
+ * @description Enterprise Test Suite for @maccpro/database-mcp (v1.2.3)
  * Validates DialectManager, MigrationEngine, QueryAnalyzer, LockAuditor,
  * SchemaModeler, ConfigTuner, MaintenanceEngine, ExplainAnalyzer, QualityGate,
- * SeederGenerator, and PartitionAdvisor across MariaDB, MySQL, PostgreSQL & SQLite.
+ * SeederGenerator, PartitionAdvisor, and server.js environment defaults across
+ * MariaDB, MySQL, PostgreSQL & SQLite.
  */
 
 import assert from 'node:assert';
@@ -22,6 +23,7 @@ import { ExplainAnalyzer } from '../engine/explain-analyzer.js';
 import { QualityGate } from '../engine/quality-gate.js';
 import { SeederGenerator } from '../engine/seeder-generator.js';
 import { PartitionAdvisor } from '../engine/partition-advisor.js';
+import { handleToolCall, TOOLS, DEFAULT_DIALECT, DEFAULT_RAM_GB } from '../server.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,7 +43,19 @@ function runTest(name, fn) {
   }
 }
 
-console.log('\n--- Starting database-mcp Verification Suite (v1.2.2) ---\n');
+async function runTestAsync(name, fn) {
+  try {
+    await fn();
+    console.log(`  [PASS] ${name}`);
+    passed++;
+  } catch (err) {
+    console.error(`  [FAIL] ${name}`);
+    console.error(`         ${err.message}`);
+    failed++;
+  }
+}
+
+console.log('\n--- Starting database-mcp Verification Suite (v1.2.3) ---\n');
 
 // ==========================================
 // 1. DialectManager Tests
@@ -697,6 +711,52 @@ runTest('LockAuditor: SQLite modify_column warns of unsupported ALTER and table 
   assert.ok(hazard, 'Must find hazard for price column');
   assert.ok(hazard.description.includes('SQLite does not support ALTER TABLE ... MODIFY/CHANGE COLUMN'));
   assert.ok(hazard.mitigation.includes('table recreation pattern'));
+});
+
+// ==========================================
+// 12. Environment Defaults & server.js Tests
+// ==========================================
+await runTestAsync('server.js: handleToolCall applies environment defaults when arguments are omitted', async () => {
+  // Test db_tune_server_config with empty args -> should use default 4GB RAM and dialect
+  const resTune = await handleToolCall('db_tune_server_config', {});
+  const parsedTune = JSON.parse(resTune.content[0].text);
+  assert.ok(parsedTune.config_file_content, 'Must generate config file');
+  assert.strictEqual(parsedTune.hardware.ram_gb, DEFAULT_RAM_GB);
+
+  // Test db_generate_migration with minimal args -> uses default dialect
+  const resMig = await handleToolCall('db_generate_migration', { table_name: 'test_table' });
+  const parsedMig = JSON.parse(resMig.content[0].text);
+  assert.ok(parsedMig.migration_code.includes("Schema::create('test_table'"));
+  assert.strictEqual(parsedMig.database_type, DEFAULT_DIALECT);
+
+  // Test db_migration_audit with minimal args
+  const resAudit = await handleToolCall('db_migration_audit', {
+    table: 'orders',
+    operations: [{ type: 'add_column', column: 'test' }]
+  });
+  const parsedAudit = JSON.parse(resAudit.content[0].text);
+  assert.strictEqual(parsedAudit.table, 'orders');
+
+  // Test db_explain_analyzer with default dialect
+  const resExplain = await handleToolCall('db_explain_analyzer', {
+    plan: 'Seq Scan on users'
+  });
+  const parsedExplain = JSON.parse(resExplain.content[0].text);
+  assert.ok(parsedExplain.summary);
+});
+
+runTest('server.js: TOOLS schema definitions declare expected defaults', () => {
+  const migTool = TOOLS.find(t => t.name === 'db_generate_migration');
+  assert.ok(migTool);
+  assert.strictEqual(migTool.inputSchema.properties.database_type.default, DEFAULT_DIALECT);
+
+  const tuneTool = TOOLS.find(t => t.name === 'db_tune_server_config');
+  assert.ok(tuneTool);
+  assert.strictEqual(tuneTool.inputSchema.properties.ram_gb.default, DEFAULT_RAM_GB);
+
+  const poolerTool = TOOLS.find(t => t.name === 'db_tune_connection_pooler');
+  assert.ok(poolerTool);
+  assert.strictEqual(poolerTool.inputSchema.properties.pooler.default, 'pgbouncer');
 });
 
 console.log(`\n--- Test Results: ${passed} Passed, ${failed} Failed ---\n`);

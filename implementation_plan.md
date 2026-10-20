@@ -1,129 +1,108 @@
-# Implementation Plan: Full Conversation Gap Analysis & Final Polish for `@maccpro/database-mcp` (v1.2.2)
+# Implementation Plan: Upgrade `.env.example` & Environment Defaults for `@maccpro/database-mcp` (v1.2.3)
 
-## Goal Description
-Conduct an end-to-end audit across the entire conversation and codebase to ensure **zero gaps, zero missed edge cases, and 100% architectural completeness** for `@maccpro/database-mcp`.
-
-While v1.2.1 remediated the 12 primary bugs and 8 major features, a deep cross-inspection between our conversation analysis and the code reveals **7 remaining gaps**:
-1. **`QueryAnalyzer`: `JOIN ... ON` Foreign Key Extraction:** Predicates inside `JOIN ... ON` clauses (e.g. `JOIN orders o ON u.id = o.user_id`) were identified in our audit discussion but not yet connected in `_extractESRPredicates()`.
-2. **`ExplainAnalyzer`: PostgreSQL Parallel Seq Scan AST Blind Spot:** Line 140 in `ExplainAnalyzer` checks strict equality `nodeType === 'Seq Scan'`, silently ignoring modern PostgreSQL `"Parallel Seq Scan"` in JSON execution plans.
-3. **`PartitionAdvisor`: Enterprise Cutover & Batched Backfill Runbook:** Generating a partitioned table without batched backfill loops and transactional swap statements leaves 10M+ existing rows stranded in the old table.
-4. **`LockAuditor`: SQLite DDL Alteration Traps:** SQLite cannot execute `ALTER TABLE ... MODIFY COLUMN` or drop foreign keys directly. `LockAuditor` needs explicit SQLite table-recreation recipes.
-5. **`MigrationEngine`: PostgreSQL `USING` Clause on Type Alterations:** PostgreSQL requires `USING column::target_type` when altering column types; standard Laravel `->change()` crashes without it.
-6. **`instructions.md`: Missing Tool Documentation:** Tools `db_tune_server_config` and `db_backup_restore_runbook` are exposed in `server.js` and `README.md` but missing from the numbered agent rules in `instructions.md`.
-7. **`QualityGate`: Dynamic Workspace Discovery:** When called over MCP, `process.cwd()` may point to the server directory rather than the target app.
-
----
-
-## User Review Required
-
-> [!IMPORTANT]
-> **PostgreSQL `Parallel Seq Scan` in JSON AST:**
-> In production PostgreSQL with multicore vCPUs, queries on large tables almost always execute as `Parallel Seq Scan` rather than `Seq Scan`. Recognizing `Parallel Seq Scan` ensures that production JSON plans are accurately flagged as `CRITICAL` sequential scans rather than passing undetected.
-
-> [!NOTE]
-> **`PartitionAdvisor` Zero-Downtime Data Migration:**
-> Creating a partitioned table structure is only step 1 of 3. We are adding the batched chunk backfill (`INSERT INTO new SELECT ... WHERE id BETWEEN ...`) and the atomic transactional table swap (`RENAME TO`) to make partition migrations safe for live production systems.
+## 1. Objective
+- **User request:** "env exaplem ti amder bortoma database-mcp er sathe upgrade kor" (Upgrade `.env.example` to match our current database-mcp capabilities).
+- **Current behavior:** 
+  - `servers/database-mcp/.env.example` is minimal (11 lines) and only lists `DB_DEFAULT_DIALECT` and `DB_MIGRATION_SCOPE`.
+  - Multiple enterprise tools (`db_tune_server_config`, `db_tune_connection_pooler`, `db_partitioning_advisor`, `db_generate_seeder_factory`, `db_migration_audit`, `db_quality_gate`, `db_backup_restore_runbook`) have hardcoded defaults inside `server.js` that cannot be centrally pre-configured via `.env`.
+  - In `server.js`, some tools (`db_explain_analyzer`, `db_partitioning_advisor`) hardcode `default: 'postgresql'` instead of respecting `DEFAULT_DIALECT`.
+- **Desired behavior:** 
+  - An enterprise-grade, comprehensive `servers/database-mcp/.env.example` file covering all 13 tools and engine settings, organized with clear comments, valid enum values, and defaults matching JoypurHost / JoypurColo production conventions.
+  - `server.js` safely reads these environment variables via `engine/env-loader.js`, reflects them in tool schema defaults, and merges them when tool arguments are omitted.
+  - Full backward compatibility and zero external dependencies preserved.
 
 ---
 
-## Open Questions
-- None. All implementations utilize native Node.js APIs without external packages.
+## 2. Repository Findings
+- **Application:** `@maccpro/database-mcp` (v1.2.2 upgrading to v1.2.3).
+- **Architecture:** Node.js (ESM), Stdio JSON-RPC 2.0, zero external npm dependencies, 100% offline and deterministic.
+- **Current Test Status:** 48/48 unit and integration tests passing in `test/run-tests.js`.
+- **Working-Tree State:** Clean Git working tree (`main` branch).
 
 ---
 
-## Proposed Changes
+## 3. Scope
+### In scope
+1. **Upgrade `.env.example`:**
+   - **General & Engine Dialect:** `DB_DEFAULT_DIALECT`, `DB_MIGRATION_SCOPE`, `DB_DEFAULT_ID_STRATEGY`, `DB_DEFAULT_DATABASE_NAME`, `DB_DEFAULT_STAGING_DB_NAME`.
+   - **Pre-Commit Quality Gate & Audit:** `DB_WORKSPACE_PATH`, `DB_LOCK_AUDIT_ROW_THRESHOLD`.
+   - **Hardware Sizing & Sysctl Tuner:** `DB_SERVER_RAM_GB`, `DB_SERVER_VCPU`, `DB_SERVER_DISK_TYPE`, `DB_SERVER_WORKLOAD`, `DB_SERVER_ENVIRONMENT`.
+   - **Connection Pooler Tuner:** `DB_DEFAULT_POOLER`, `DB_POOLER_MAX_CLIENT_CONNECTIONS`, `DB_TARGET_HOST`.
+   - **Seeders & Table Partitioning:** `DB_SEEDER_RECORD_COUNT`, `DB_PARTITION_DEFAULT_TYPE`, `DB_PARTITION_DEFAULT_INTERVAL`.
+2. **Wire Environment Variables in `server.js`:**
+   - Read parsed environment variables with fallback defaults.
+   - Connect them to tool JSON schemas.
+   - Merge defaults in `handleToolCall` when optional parameters are omitted by MCP clients.
+3. **Automated Verification:**
+   - Add new tests in `test/run-tests.js` testing environment loading and default resolution.
+   - Verify that all 48 existing tests continue to pass without regression.
+4. **Documentation & Versioning:**
+   - Bump version to `v1.2.3` in `package.json`, `README.md`, and test runner header.
 
-```mermaid
-flowchart TD
-    subgraph ConversationReview ["Full Conversation & Codebase Audit"]
-        Audit1["JOIN ON Foreign Keys"]
-        Audit2["Parallel Seq Scan in AST"]
-        Audit3["Partitioning Cutover & Backfill"]
-        Audit4["SQLite ALTER DDL Traps"]
-        Audit5["Postgres USING Cast in Migrations"]
-        Audit6["Documentation Synchronization"]
-    end
-
-    subgraph Implementation ["Engine Upgrades (v1.2.2)"]
-        QA["query-analyzer.js"]
-        EA["explain-analyzer.js"]
-        PA["partition-advisor.js"]
-        LA["lock-auditor.js"]
-        ME["migration-engine.js"]
-        Docs["instructions.md & server.js"]
-    end
-
-    Audit1 --> QA
-    Audit2 --> EA
-    Audit3 --> PA
-    Audit4 --> LA
-    Audit5 --> ME
-    Audit6 --> Docs
-```
+### Out of scope
+- Adding external npm packages (maintains 0 external dependencies).
+- Direct live database connections (server remains 100% offline static analyzer and generator).
 
 ---
 
-### Component 1: Query Optimization & Plan Analysis
+## 4. Proposed Changes
 
-#### [MODIFY] [`engine/query-analyzer.js`](file:///d:/mcp-collection/servers/database-mcp/engine/query-analyzer.js)
-- **`JOIN ... ON` Extraction:** Parse `JOIN <table> [AS <alias>] ON <left> = <right>` clauses. Extract foreign key columns on joined tables (excluding primary key `id` on parent tables) and attribute them to the joined table's ESR equality set.
-
-#### [MODIFY] [`engine/explain-analyzer.js`](file:///d:/mcp-collection/servers/database-mcp/engine/explain-analyzer.js)
-- **Parallel Sequential Scan Recognition:** Update `_walkPostgresPlanNode` to check `nodeType === 'Seq Scan' || nodeType === 'Parallel Seq Scan'` so parallel query plans trigger the `SEQUENTIAL_SCAN` critical diagnostic.
-
----
-
-### Component 2: Table Partitioning & Migration Reversibility
-
-#### [MODIFY] [`engine/partition-advisor.js`](file:///d:/mcp-collection/servers/database-mcp/engine/partition-advisor.js)
-- **Production Cutover Runbook:** Add structured cutover instructions:
-  - Step 1: DDL creation of partitioned table & partitions.
-  - Step 2: Batched chunk backfill script (`WHERE id BETWEEN ? AND ?`) with sleep delays to prevent replication lag and buffer pool eviction.
-  - Step 3: Atomic zero-downtime table swap inside an exclusive transaction.
-
-#### [MODIFY] [`engine/migration-engine.js`](file:///d:/mcp-collection/servers/database-mcp/engine/migration-engine.js)
-- **PostgreSQL `USING` Cast:** In `modify_column`, when `dialect === 'postgresql'`, append raw `DB::statement("ALTER TABLE ... ALTER COLUMN ... TYPE ... USING ...::type")` or note to prevent casting failures on type conversions.
+| Step | File | Proposed Change | Reason | Risk |
+|---|---|---|---|---|
+| 1 | `servers/database-mcp/.env.example` | Add 5 structured sections with all supported environment variables, comments, and defaults. | Provide a complete configuration reference for developers and agents. | None |
+| 2 | `servers/database-mcp/server.js` | Read the new environment variables and wire them into tool schemas and `handleToolCall` defaults. | Ensure `.env` settings actually take effect when arguments are omitted. | Low (fallback values preserve exact current behavior) |
+| 3 | `servers/database-mcp/package.json` | Bump version from 1.2.2 to 1.2.3. | Reflect feature addition and configuration upgrade. | None |
+| 4 | `servers/database-mcp/README.md` | Update configuration section in README to document `.env` capabilities. | Keep documentation aligned with codebase. | None |
+| 5 | `servers/database-mcp/test/run-tests.js` | Add tests verifying environment variable defaults and tool call fallback resolution. | Prevent regression and verify that env defaults take effect. | None |
 
 ---
 
-### Component 3: Lock Auditing & Documentation
-
-#### [MODIFY] [`engine/lock-auditor.js`](file:///d:/mcp-collection/servers/database-mcp/engine/lock-auditor.js)
-- **SQLite DDL Limitations:** In `change_column_type`, if dialect is `sqlite`, flag `CRITICAL` risk with explicit instructions that SQLite requires table recreation via temporary table copy.
-
-#### [MODIFY] [`instructions.md`](file:///d:/mcp-collection/servers/database-mcp/instructions.md) & [`server.js`](file:///d:/mcp-collection/servers/database-mcp/server.js)
-- **Documentation Sync:** Add dedicated sections in `instructions.md` for `db_tune_server_config` (Hardware sizing & NVMe/sysctl parameter calculator) and `db_backup_restore_runbook` (Physical & logical backup, Point-In-Time Recovery PITR).
-- Bump version to `1.2.2` in `package.json` and `server.js`.
+## 5. Design and Compatibility
+- **Backward Compatibility:** All new environment variables have hardcoded fallbacks identical to the existing default values (`mariadb`, `standard`, `id`, `4`, `100000`, `2000`, etc.). Existing installations without `.env` will continue working with identical behavior.
+- **Zero-Dependency Guarantee:** Uses the existing `env-loader.js` which operates using only native `node:fs` and `node:path`.
 
 ---
 
-### Component 4: Test Suite Expansion
-
-#### [MODIFY] [`test/run-tests.js`](file:///d:/mcp-collection/servers/database-mcp/test/run-tests.js)
-- Add 5 new tests:
-  1. `QueryAnalyzer: extract JOIN ... ON foreign key into joined table index`
-  2. `ExplainAnalyzer: detect PostgreSQL Parallel Seq Scan in JSON AST`
-  3. `PartitionAdvisor: generate batched chunk backfill and atomic cutover swap`
-  4. `LockAuditor: SQLite change_column_type table recreation warning`
-  5. `MigrationEngine: PostgreSQL modify_column with USING type casting`
-- Target: **48 Passed, 0 Failed**.
+## 6. Security and Data Integrity
+- No sensitive credentials, passwords, or live database connection strings are introduced; `database-mcp` remains completely air-gapped, offline, and safe from credential leakage.
+- Variables only configure defaults for code generation, static analysis, and hardware calculation formulas.
 
 ---
 
-## Verification Plan
+## 7. Database and Operations
+- **Migration/backfill:** N/A (MCP server configuration).
+- **Deployment order:** Local configuration update; zero deployment downtime.
+- **Rollback:** Fully reversible via Git commit rollback.
 
-### Automated Tests
-Run the expanded test suite:
-```powershell
-node servers/database-mcp/test/run-tests.js
-```
-*Expected Result:*
-- 48 Passed, 0 Failed.
-- Version header displays `(v1.2.2)`.
+---
 
-### Git Status
-```powershell
-git status --short
-```
-*Expected Result:*
-- Only task files modified, clean commit.
+## 8. Implementation Sequence
+1. Update `servers/database-mcp/.env.example` with full enterprise configuration options.
+2. Update `servers/database-mcp/server.js` to parse and apply the environment defaults across tool schemas and handlers.
+3. Update `servers/database-mcp/package.json` and `servers/database-mcp/README.md` to `v1.2.3`.
+4. Add new tests to `servers/database-mcp/test/run-tests.js` and execute the full test suite.
+5. Create a Conventional Commit upon successful verification.
+
+---
+
+## 9. Verification Plan
+| Check | Command/procedure | Expected evidence | Required? |
+|---|---|---|---|
+| Test suite execution | `node servers/database-mcp/test/run-tests.js` | 50+ tests pass with 0 failures | Yes |
+| Git status verification | `git status --short` | Only task-related files modified | Yes |
+| Working tree check | Inspect git diff | Clean, minimal, and fully documented changes | Yes |
+
+---
+
+## 10. Acceptance Criteria
+- [ ] `.env.example` contains all 5 configuration sections covering all 13 tools.
+- [ ] `server.js` wires each environment variable to its respective tool default with safe fallback values.
+- [ ] Omitted tool arguments automatically inherit configured `.env` values.
+- [ ] 100% of tests pass in `node servers/database-mcp/test/run-tests.js`.
+- [ ] Version updated to `1.2.3` in `package.json` and `README.md`.
+
+---
+
+## 11. Approval
+- **Plan status:** Awaiting approval
+- **Approved scope:** Upgrade `.env.example`, wire defaults in `server.js`, update docs/version, and add test verification for `database-mcp`.

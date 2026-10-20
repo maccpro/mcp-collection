@@ -1,4 +1,4 @@
-# @maccpro/database-mcp (v1.2.1)
+# @maccpro/database-mcp (v1.2.3)
 
 > **Enterprise Database Architecture, Reversible Migrations, SARGable Query Optimizer, EXPLAIN Plan Diagnostics, Connection Pooler & Hardware Tuner for MariaDB, MySQL, PostgreSQL & SQLite**
 > 100% Offline, Deterministic, Zero-Token & Free.
@@ -78,3 +78,16 @@
 
 - `optimize-slow-query`: Step-by-step query optimization, SARGability audit, and ESR composite index design.
 - `plan-zero-downtime-migration`: Safe expand-contract zero-downtime migration recipe.
+
+---
+
+## Configuration (`.env`)
+
+Database MCP runs 100% offline with zero external dependencies and requires no live database credentials. Global defaults for code generation and analysis can be configured via `.env` (see `.env.example`):
+
+- **Dialect & Scope:** `DB_DEFAULT_DIALECT=mariadb`, `DB_MIGRATION_SCOPE=standard`, `DB_DEFAULT_ID_STRATEGY=id`
+- **Application Databases:** `DB_DEFAULT_DATABASE_NAME=app_production`, `DB_DEFAULT_STAGING_DB_NAME=app_staging`
+- **Quality Gate:** `DB_WORKSPACE_PATH`, `DB_LOCK_AUDIT_ROW_THRESHOLD=100000`
+- **Hardware Sizing:** `DB_SERVER_RAM_GB=4`, `DB_SERVER_VCPU=4`, `DB_SERVER_DISK_TYPE=nvme`, `DB_SERVER_WORKLOAD=oltp`
+- **Connection Pooler:** `DB_DEFAULT_POOLER=pgbouncer`, `DB_POOLER_MAX_CLIENT_CONNECTIONS=2000`, `DB_TARGET_HOST=127.0.0.1`
+- **Seeders & Partitions:** `DB_SEEDER_RECORD_COUNT=50`, `DB_PARTITION_DEFAULT_TYPE=range`, `DB_PARTITION_DEFAULT_INTERVAL=monthly`
