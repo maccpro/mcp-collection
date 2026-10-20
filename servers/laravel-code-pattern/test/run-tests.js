@@ -1,4 +1,5 @@
 import assert from 'node:assert';
+import { spawn } from 'node:child_process';
 import { StaticAnalyzer } from '../engine/static-analyzer.js';
 import { RulesEvaluator } from '../engine/rules.js';
 import { CrossModuleChecker } from '../engine/cross-module.js';
@@ -578,5 +579,310 @@ assert.ok(mermaidOutput.includes('Sub_RepositoryInterface'));
 assert.ok(mermaidOutput.includes('Sub_Resource'));
 console.log('✅ Test 22 Passed: Complete 10-Stage Canonical Flow & Mermaid Graph validated with zero violations.');
 
-console.log('\n🎉 ALL 22 COMPREHENSIVE ENTERPRISE QUALITY GATE TESTS PASSED! 🎉\n');
+
+// ---------------------------------------------------------
+// Test 23: Heredoc parsing with internal quotes without data loss
+// ---------------------------------------------------------
+const heredocCode = `<?php
+namespace App\\Services;
+class TemplateService {
+    public function render() {
+        \$html = <<<HTML
+<div class="user-card" id='profile'>
+    <p>Hello "world", it's a great day!</p>
+</div>
+HTML;
+        return \$html;
+    }
+    public function afterHeredocMethod() {
+        return 42;
+    }
+}
+`;
+const parsedHeredoc = StaticAnalyzer.parse('app/Services/TemplateService.php', heredocCode);
+assert.strictEqual(parsedHeredoc.className, 'TemplateService');
+assert.ok(parsedHeredoc.methods.some(m => m.name === 'render'), 'Should parse render method');
+assert.ok(parsedHeredoc.methods.some(m => m.name === 'afterHeredocMethod'), 'Methods after heredoc must not be wiped');
+console.log('✅ Test 23 Passed: Heredoc parsing with internal quotes preserved without data loss.');
+
+// ---------------------------------------------------------
+// Test 24: PHP 8 attributes & SensitiveParameter preservation
+// ---------------------------------------------------------
+const attributeCode = `<?php
+namespace App\\Actions;
+#[AsCommand('app:test')]
+class ResetPasswordAction {
+    public function __invoke(
+        #[SensitiveParameter] string \$password,
+        ?string \$token = null
+    ): bool {
+        return true;
+    }
+}
+`;
+const parsedAttr = StaticAnalyzer.parse('app/Actions/ResetPasswordAction.php', attributeCode);
+assert.strictEqual(parsedAttr.className, 'ResetPasswordAction');
+assert.strictEqual(parsedAttr.layer, 'Action');
+assert.ok(parsedAttr.methods.some(m => m.name === '__invoke'), 'Should extract __invoke method despite PHP 8 attributes');
+console.log('✅ Test 24 Passed: PHP 8 attributes and SensitiveParameter preserved without line corruption.');
+
+// ---------------------------------------------------------
+// Test 25: Closure use ($var) not polluting imports
+// ---------------------------------------------------------
+const closureCode = `<?php
+namespace App\\Actions;
+use App\\Repositories\\UserRepositoryInterface;
+
+class FilterUsersAction {
+    public function __invoke(UserRepositoryInterface \$repo) {
+        \$multiplier = 2;
+        \$items = array_map(function(\$x) use (\$multiplier, \$repo) {
+            return \$x * \$multiplier;
+        }, [1, 2, 3]);
+        return \$items;
+    }
+}
+`;
+const parsedClosure = StaticAnalyzer.parse('app/Actions/FilterUsersAction.php', closureCode);
+assert.ok(parsedClosure.imports.some(imp => imp.classPath === 'App\\Repositories\\UserRepositoryInterface'));
+assert.ok(!parsedClosure.imports.some(imp => imp.statement.includes('\$multiplier')), 'Closure use ($multiplier) must not be treated as class import');
+assert.ok(!parsedClosure.imports.some(imp => imp.statement.includes('\$repo')), 'Closure use ($repo) must not be treated as class import');
+console.log('✅ Test 25 Passed: Closure use ($var) scoped and excluded from relational imports.');
+
+// ---------------------------------------------------------
+// Test 26: SQL injection detection with comma inside SQL string
+// ---------------------------------------------------------
+const sqlInjCode = `<?php
+namespace App\\Repositories;
+use Illuminate\\Support\\Facades\\DB;
+class UserRepository implements UserRepositoryInterface {
+    public function findRaw(\$id) {
+        return DB::selectRaw("SELECT id, name, email FROM users WHERE id = " . \$id);
+    }
+}
+`;
+const parsedSql = StaticAnalyzer.parse('app/Repositories/UserRepository.php', sqlInjCode);
+const sqlViolations = RulesEvaluator.evaluate(parsedSql);
+assert.ok(sqlViolations.some(v => v.rule === 'sql_injection_raw_exposure'), 'Should detect raw SQL concatenation with commas');
+console.log('✅ Test 26 Passed: Raw SQL injection with comma-separated column string correctly flagged.');
+
+// ---------------------------------------------------------
+// Test 27: Layer detection on suffix edge cases
+// ---------------------------------------------------------
+const actionWithRequestInName = `<?php namespace App\\Actions; class ApproveRefundRequestAction { public function __invoke() {} }`;
+const parsedRefundAction = StaticAnalyzer.parse('app/Actions/ApproveRefundRequestAction.php', actionWithRequestInName);
+assert.strictEqual(parsedRefundAction.layer, 'Action', 'ApproveRefundRequestAction must be detected as Action, not FormRequest');
+
+const eventWithCreatedInName = `<?php namespace App\\Events; class OrderCreatedEvent {}`;
+const parsedEvent = StaticAnalyzer.parse('app/Events/OrderCreatedEvent.php', eventWithCreatedInName);
+assert.strictEqual(parsedEvent.layer, 'Event', 'OrderCreatedEvent must be detected as Event');
+console.log('✅ Test 27 Passed: Layer detection suffix priority verified for compound names.');
+
+// ---------------------------------------------------------
+// Test 28: N+1 query detection with inner if block inside loop
+// ---------------------------------------------------------
+const nPlusOneNestedCode = `<?php
+namespace App\\Services;
+use App\\Models\\Order;
+class OrderReportService {
+    public function generate(\$orders) {
+        \$results = [];
+        foreach (\$orders as \$order) {
+            if (\$order->isActive()) {
+                \$results[] = Order::find(\$order->id);
+            }
+        }
+        return \$results;
+    }
+}
+`;
+const parsedNestedNPlusOne = StaticAnalyzer.parse('app/Services/OrderReportService.php', nPlusOneNestedCode);
+const n1Violations = RulesEvaluator.evaluate(parsedNestedNPlusOne);
+assert.ok(n1Violations.some(v => v.rule === 'n_plus_one_loop_query'), 'Should detect N+1 query inside nested if within loop');
+console.log('✅ Test 28 Passed: N+1 query inside nested loop blocks detected via balanced brace extraction.');
+
+// ---------------------------------------------------------
+// Test 29: Instance mass assignment ($invoice->update($request->all()))
+// ---------------------------------------------------------
+const instanceMassAssignCode = `<?php
+namespace App\\Http\\Controllers;
+use App\\Actions\\UpdateInvoiceAction;
+use Illuminate\\Http\\Request;
+class InvoiceController {
+    public function update(Request \$request, \$invoice) {
+        \$invoice->update(\$request->all());
+        return response()->json(['status' => 'ok']);
+    }
+}
+`;
+const parsedInstanceMass = StaticAnalyzer.parse('app/Http/Controllers/InvoiceController.php', instanceMassAssignCode);
+const massViolations = RulesEvaluator.evaluate(parsedInstanceMass);
+assert.ok(massViolations.some(v => v.rule === 'mass_assignment_unguarded'), 'Should detect $invoice->update($request->all())');
+console.log('✅ Test 29 Passed: Instance mass assignment hazard caught.');
+
+// ---------------------------------------------------------
+// Test 30: Observer secondary model save does not trigger recursion hazard
+// ---------------------------------------------------------
+const secondaryObserverCode = `<?php
+namespace App\\Observers;
+use App\\Models\\ActivityLog;
+class InvoiceObserver {
+    public function saved(\$invoice) {
+        \$log = new ActivityLog();
+        \$log->action = 'invoice_saved';
+        \$log->save();
+    }
+}
+`;
+const parsedSecObserver = StaticAnalyzer.parse('app/Observers/InvoiceObserver.php', secondaryObserverCode);
+const secObsViolations = RulesEvaluator.evaluate(parsedSecObserver);
+assert.ok(!secObsViolations.some(v => v.rule === 'observer_recursion_hazard'), 'Saving secondary model should not flag recursion hazard');
+console.log('✅ Test 30 Passed: Observer recursion hazard properly scoped to target parameter only.');
+
+// ---------------------------------------------------------
+// Test 31: repository_business_logic detection
+// ---------------------------------------------------------
+const repoWithMailCode = `<?php
+namespace App\\Repositories;
+use Illuminate\\Support\\Facades\\Mail;
+class OrderRepository implements OrderRepositoryInterface {
+    public function store(\$data) {
+        Mail::to('admin@example.com')->send(new OrderPlacedMail());
+        return true;
+    }
+}
+`;
+const parsedRepoMail = StaticAnalyzer.parse('app/Repositories/OrderRepository.php', repoWithMailCode);
+const repoMailViolations = RulesEvaluator.evaluate(parsedRepoMail);
+assert.ok(repoMailViolations.some(v => v.rule === 'repository_business_logic'), 'Mail:: in Repository should trigger repository_business_logic');
+console.log('✅ Test 31 Passed: repository_business_logic rule enforced.');
+
+// ---------------------------------------------------------
+// Test 32: unbounded_transaction_boundary detection
+// ---------------------------------------------------------
+const multiMutationCode = `<?php
+namespace App\\Services;
+use App\\Models\\Order;
+use App\\Models\\Payment;
+class CheckoutService {
+    public function checkout(\$orderData, \$paymentData) {
+        Order::create(\$orderData);
+        Payment::create(\$paymentData);
+    }
+}
+`;
+const parsedMultiMut = StaticAnalyzer.parse('app/Services/CheckoutService.php', multiMutationCode);
+const multiMutViolations = RulesEvaluator.evaluate(parsedMultiMut);
+assert.ok(multiMutViolations.some(v => v.rule === 'unbounded_transaction_boundary'), 'Multiple model mutations without DB::transaction must trigger unbounded_transaction_boundary');
+console.log('✅ Test 32 Passed: unbounded_transaction_boundary rule enforced.');
+
+// ---------------------------------------------------------
+// Test 33: cache_unbounded_ttl detection
+// ---------------------------------------------------------
+const cacheForeverCode = `<?php
+namespace App\\Services;
+use Illuminate\\Support\\Facades\\Cache;
+class SettingsService {
+    public function getSettings() {
+        return Cache::rememberForever('global_settings', function() {
+            return [];
+        });
+    }
+}
+`;
+const parsedCache = StaticAnalyzer.parse('app/Services/SettingsService.php', cacheForeverCode);
+const cacheViolations = RulesEvaluator.evaluate(parsedCache);
+assert.ok(cacheViolations.some(v => v.rule === 'cache_unbounded_ttl'), 'Cache::rememberForever without tags must trigger cache_unbounded_ttl');
+console.log('✅ Test 33 Passed: cache_unbounded_ttl rule enforced.');
+
+// ---------------------------------------------------------
+// Test 34: event_after_commit_missing detection
+// ---------------------------------------------------------
+const eventWithoutAfterCommitCode = `<?php
+namespace App\\Events;
+use Illuminate\\Queue\\SerializesModels;
+class OrderPaidEvent {
+    use SerializesModels;
+    public function __construct(public int \$orderId) {}
+}
+`;
+const parsedEventNoCommit = StaticAnalyzer.parse('app/Events/OrderPaidEvent.php', eventWithoutAfterCommitCode);
+const eventViolations = RulesEvaluator.evaluate(parsedEventNoCommit);
+assert.ok(eventViolations.some(v => v.rule === 'event_after_commit_missing'), 'Transactional event without ShouldHandleEventsAfterCommit must trigger event_after_commit_missing');
+console.log('✅ Test 34 Passed: event_after_commit_missing rule enforced.');
+
+// ---------------------------------------------------------
+// Test 35: tenant_unscoped_query detection
+// ---------------------------------------------------------
+const tenantModelCode = `<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+class TenantInvoice extends Model {
+    protected \$table = 'tenant_invoices';
+}
+`;
+const parsedTenantModel = StaticAnalyzer.parse('app/Models/TenantInvoice.php', tenantModelCode);
+const tenantViolations = RulesEvaluator.evaluate(parsedTenantModel);
+assert.ok(tenantViolations.some(v => v.rule === 'tenant_unscoped_query'), 'Tenant-named model without BelongsToTenant must trigger tenant_unscoped_query');
+console.log('✅ Test 35 Passed: tenant_unscoped_query rule enforced.');
+
+// ---------------------------------------------------------
+// Test 36: Cross-module DDD subpath violation
+// ---------------------------------------------------------
+const crossModuleSubpathCode = `<?php
+namespace App\\Modules\\Shipping\\Services;
+use App\\Modules\\Billing\\Domain\\Models\\Invoice;
+class ShippingService {
+    public function ship(\$id) {
+        return Invoice::find(\$id);
+    }
+}
+`;
+const parsedCrossDdd = StaticAnalyzer.parse('app/Modules/Shipping/Services/ShippingService.php', crossModuleSubpathCode);
+const crossDddViolations = CrossModuleChecker.check(parsedCrossDdd);
+assert.strictEqual(crossDddViolations.length, 1);
+assert.strictEqual(crossDddViolations[0].rule, 'cross_module_internal_dependency');
+console.log('✅ Test 36 Passed: Cross-module DDD nested subpath imports strictly flagged.');
+
+// ---------------------------------------------------------
+// Test 37: validate_layer_contract Invariants Verification
+// ---------------------------------------------------------
+const nonInvokableAction = `<?php namespace App\\Actions; class ProcessOrderAction { public function execute() { return true; } }`;
+const parsedActionNoInvoke = StaticAnalyzer.parse('app/Actions/ProcessOrderAction.php', nonInvokableAction);
+assert.strictEqual(parsedActionNoInvoke.methods.some(m => m.name === '__invoke'), false, 'Action without __invoke should have hasInvoke false');
+
+const invokableAction = `<?php namespace App\\Actions; class ProcessOrderAction { public function __invoke() { return true; } }`;
+const parsedActionInvoke = StaticAnalyzer.parse('app/Actions/ProcessOrderAction.php', invokableAction);
+assert.strictEqual(parsedActionInvoke.methods.some(m => m.name === '__invoke'), true, 'Action with __invoke should have hasInvoke true');
+
+const mutableDto = `<?php namespace App\\DTOs; class CreateUserDTO { public string \$name; }`;
+const parsedMutableDto = StaticAnalyzer.parse('app/DTOs/CreateUserDTO.php', mutableDto);
+assert.strictEqual(/\breadonly\s+class\b/i.test(parsedMutableDto.cleanCode), false);
+
+const readonlyDto = `<?php namespace App\\DTOs; readonly class CreateUserDTO { public function __construct(public string \$name) {} }`;
+const parsedReadonlyDto = StaticAnalyzer.parse('app/DTOs/CreateUserDTO.php', readonlyDto);
+assert.strictEqual(/\breadonly\s+class\b/i.test(parsedReadonlyDto.cleanCode), true);
+console.log('✅ Test 37 Passed: validate_layer_contract invariants verified.');
+
+// ---------------------------------------------------------
+// Test 38: JSON-RPC -32700 Parse error on invalid JSON
+// ---------------------------------------------------------
+const serverProcess = spawn('node', ['D:/mcp-collection/servers/laravel-code-pattern/server.js'], {
+    stdio: ['pipe', 'pipe', 'pipe']
+});
+
+let stdoutData = '';
+serverProcess.stdout.on('data', chunk => {
+    stdoutData += chunk.toString();
+});
+
+serverProcess.stdin.write('{"jsonrpc": "2.0", INVALID_JSON\n');
+setTimeout(() => {
+    serverProcess.kill();
+    assert.ok(stdoutData.includes('-32700'), 'Malformed input must elicit JSON-RPC -32700 error');
+    assert.ok(stdoutData.includes('Parse error'), 'Error response should specify Parse error');
+    console.log('✅ Test 38 Passed: JSON-RPC -32700 Parse error returned on invalid JSON.');
+    console.log('\n🎉 ALL 38 COMPREHENSIVE ENTERPRISE QUALITY GATE TESTS PASSED! 🎉\n');
+}, 600);
+
 

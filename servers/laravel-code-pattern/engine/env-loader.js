@@ -69,6 +69,11 @@ export function loadEnv(dir, forceReload = false) {
 
         if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith('\'') && value.endsWith('\''))) {
           value = value.substring(1, value.length - 1);
+        } else {
+          const commentIdx = value.indexOf(' #');
+          if (commentIdx !== -1) {
+            value = value.substring(0, commentIdx).trim();
+          }
         }
 
         // Only set if not already set or if loading primary target

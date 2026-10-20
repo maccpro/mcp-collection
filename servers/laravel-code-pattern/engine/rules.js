@@ -283,6 +283,10 @@ export class RulesEvaluator {
     // 0. Global Security & Reliability Checks
     this.evaluateSecurity(parsed, addViolation);
     this.evaluateExceptions(parsed, addViolation);
+    this.evaluateTransactions(parsed, addViolation);
+    this.evaluateCaching(parsed, addViolation);
+    this.evaluateEvents(parsed, addViolation);
+    this.evaluateMultiTenancy(parsed, addViolation, config);
 
     // 1. Controller Layer Checks
     if (parsed.layer === 'Controller') {
@@ -424,8 +428,8 @@ export class RulesEvaluator {
         }
       }
 
-      // Mass assignment: create($request->all()) or update($request->all())
-      if (/::(create|update)\s*\(\s*\$request->(all|input)\s*\(/i.test(line)) {
+      // Mass assignment: create($request->all()) or update($request->all()) or fill($request->all())
+      if (/(?:::|->)(?:create|update|fill)\s*\(\s*\$request->(?:all|input)\s*\(/i.test(line)) {
         addViolation(
           'mass_assignment_unguarded',
           lineNum,
@@ -468,7 +472,7 @@ export class RulesEvaluator {
       const rawModelReturnMatch = body.match(/return\s+(?:response\(\)->json\s*\(\s*)?([A-Z][a-zA-Z0-9_]*::(?:all|get|paginate|find|findOrFail|first)\b|\$[a-zA-Z0-9_]+->(?:all|get|paginate)\b)/i);
       if (rawModelReturnMatch) {
         const returnedExpression = rawModelReturnMatch[0];
-        const isResourceWrapped = /new\s+[A-Z][a-zA-Z0-9_]*Resource\s*\(|[A-Z][a-zA-Z0-9_]*Resource::collection\s*\(/i.test(body);
+        const isResourceWrapped = /new\s+[A-Z][a-zA-Z0-9_]*Resource\s*\(|[A-Z][a-zA-Z0-9_]*Resource::(?:collection|make)\s*\(/i.test(body);
         if (!isResourceWrapped) {
           addViolation(
             'controller_raw_model_response',
@@ -571,7 +575,7 @@ export class RulesEvaluator {
       }
     }
 
-    // Check inline Request injection
+    // Check inline Request injection and domain business logic inside methods
     for (const method of parsed.methods) {
       if (/\bRequest\s+\$/i.test(method.params)) {
         addViolation(
@@ -579,6 +583,22 @@ export class RulesEvaluator {
           method.startLine,
           `function ${method.name}(${method.params})`,
           `Repository method injects HTTP Request. Pass specific primitives or DTO instead.`
+        );
+      }
+
+      // Check repository_business_logic: business calculations, emails/notifications, or external HTTP calls
+      const body = method.bodyText || '';
+      const hasBusinessCalc = /\b(?:\$price|\$total|\$amount|\$tax|\$discount)\s*[\*\/+-=].*?(?:\$tax|\$vat|\$discount|\b0\.\d+)\b/i.test(body);
+      const hasNotification = /\b(?:Http::|Notification::send|\bMail::to)\b/i.test(body);
+      const hasDomainException = /\bthrow\s+new\s+(?!(?:ModelNotFoundException|QueryException|DatabaseException|RuntimeException)\b)[A-Z][a-zA-Z0-9_]*Exception\b/i.test(body);
+
+      if (hasBusinessCalc || hasNotification || hasDomainException) {
+        addViolation(
+          'repository_business_logic',
+          method.startLine,
+          `Method ${method.name}() contains domain business rules.`,
+          `Repository method "${method.name}" contains domain business logic, calculations, or notifications. Repositories must solely handle persistence and retrieval.`,
+          'Move business calculations, notifications, and domain exception handling to an Action or Domain Service.'
         );
       }
     }
@@ -644,15 +664,21 @@ export class RulesEvaluator {
       const lifecycleMethods = ['saving', 'saved', 'updating', 'updated', 'creating', 'created', 'deleting', 'deleted'];
       if (lifecycleMethods.includes(method.name.toLowerCase())) {
         const body = method.bodyText || '';
-        const recursiveMatch = body.match(/\$[a-zA-Z0-9_]+->(save|update|touch)\s*\(/i);
-        if (recursiveMatch && !body.includes('saveQuietly') && !body.includes('updateQuietly')) {
-          addViolation(
-            'observer_recursion_hazard',
-            method.startLine,
-            recursiveMatch[0],
-            `Direct model mutation "${recursiveMatch[0]}" inside Observer hook "${method.name}" can trigger infinite recursion.`,
-            'Use saveQuietly() or updateQuietly() to prevent re-triggering lifecycle events recursively.'
-          );
+        const paramMatch = method.params.match(/\$([a-zA-Z0-9_]+)/);
+        const observedVar = paramMatch ? paramMatch[1] : null;
+
+        if (observedVar) {
+          const targetPattern = new RegExp(`\\$${observedVar}->(?:save|update|touch)\\s*\\(`, 'i');
+          const recursiveMatch = body.match(targetPattern);
+          if (recursiveMatch && !body.includes('saveQuietly') && !body.includes('updateQuietly')) {
+            addViolation(
+              'observer_recursion_hazard',
+              method.startLine,
+              recursiveMatch[0],
+              `Direct model mutation "${recursiveMatch[0]}" on observed model "$${observedVar}" inside Observer hook "${method.name}" can trigger infinite recursion.`,
+              'Use saveQuietly() or updateQuietly() to prevent re-triggering lifecycle events recursively.'
+            );
+          }
         }
       }
     }
@@ -699,7 +725,7 @@ export class RulesEvaluator {
 
     // Check if migration in central directory alters tenant-specific tables in multi-tenant setup
     if (!isTenantDir && config.multi_tenancy?.enabled) {
-      const tenantKeywords = ['tenants_users', 'tenant_orders', 'tenant_invoices'];
+      const tenantKeywords = ['tenants_users', 'tenant_orders', 'tenant_invoices', 'tenant_subscriptions', 'tenant_settings'];
       for (const kw of tenantKeywords) {
         if (content.toLowerCase().includes(kw)) {
           addViolation(
@@ -714,16 +740,43 @@ export class RulesEvaluator {
   }
 
   /**
-   * Performance checks: detect N+1 queries inside loops
+   * Helper to extract balanced curly brace blocks { ... }
+   */
+  static extractBalancedBlock(text, openBraceIdx) {
+    let depth = 0;
+    let started = false;
+    let startPos = -1;
+    for (let i = openBraceIdx; i < text.length; i++) {
+      if (text[i] === '{') {
+        if (!started) { started = true; startPos = i; }
+        depth++;
+      } else if (text[i] === '}') {
+        depth--;
+        if (started && depth === 0) {
+          return text.substring(startPos + 1, i);
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Performance checks: detect N+1 queries inside loops (with balanced block extraction)
    */
   static evaluatePerformance(parsed, addViolation) {
     for (const method of parsed.methods) {
       const body = method.bodyText || '';
-      // Detect foreach (...) { ... Model::find(...) or ->relation() }
-      const loopMatch = body.match(/(?:foreach|while)\s*\([^)]+\)\s*\{([^}]+)\}/gi);
-      if (loopMatch) {
-        for (const loopBody of loopMatch) {
-          if (/\b(?:where|find|first|get|all|query)\s*\(/i.test(loopBody) || /\$[a-zA-Z0-9_]+->[a-zA-Z0-9_]+\(\)->(?:where|get|first)/i.test(loopBody)) {
+      const loopHeaderRegex = /(?:foreach|while)\s*\([^)]+\)\s*\{/gi;
+      let match;
+      while ((match = loopHeaderRegex.exec(body)) !== null) {
+        const openBraceIdx = match.index + match[0].length - 1;
+        const loopBody = this.extractBalancedBlock(body, openBraceIdx);
+        if (loopBody) {
+          if (
+            /\b(?:where|find|first|get|all|query)\s*\(/i.test(loopBody) ||
+            /\$[a-zA-Z0-9_]+->[a-zA-Z0-9_]+\(\)->(?:where|get|first)/i.test(loopBody) ||
+            /\b[A-Z][a-zA-Z0-9_]*::find\s*\(/i.test(loopBody)
+          ) {
             addViolation(
               'n_plus_one_loop_query',
               method.startLine,
@@ -732,6 +785,131 @@ export class RulesEvaluator {
             );
           }
         }
+      }
+    }
+  }
+
+  /**
+   * Evaluate transaction boundaries on multi-table mutations
+   */
+  static evaluateTransactions(parsed, addViolation) {
+    if (parsed.layer !== 'Action' && parsed.layer !== 'Service') return;
+
+    for (const method of parsed.methods) {
+      const body = method.bodyText || '';
+      if (body.includes('DB::transaction') || body.includes('beginTransaction')) {
+        continue;
+      }
+
+      // Match distinct model persistence or table mutation calls
+      const mutationMatches = body.match(/(?:->(?:save|update|delete|saveOrFail|forceDelete)\s*\(|::(?:create|insert|updateOrInsert|destroy|delete)\s*\()/gi) || [];
+      if (mutationMatches.length >= 2) {
+        addViolation(
+          'unbounded_transaction_boundary',
+          method.startLine,
+          `Method ${method.name}() has ${mutationMatches.length} database mutation calls without DB::transaction().`,
+          `Multiple database mutations detected in ${parsed.layer} method "${method.name}" without enclosing DB::transaction().`,
+          'Wrap multi-model mutations in DB::transaction(function() { ... }) to ensure atomic consistency.'
+        );
+      }
+    }
+  }
+
+  /**
+   * Evaluate unbounded cache storage
+   */
+  static evaluateCaching(parsed, addViolation) {
+    const code = parsed.cleanCode || '';
+    if (!code.includes('Cache::')) return;
+
+    // Check Cache::forever( or Cache::rememberForever(
+    const foreverMatch = code.match(/\bCache::(?:forever|rememberForever)\s*\([^)]+\)/i);
+    if (foreverMatch) {
+      const lineNum = code.substring(0, foreverMatch.index).split('\n').length;
+      addViolation(
+        'cache_unbounded_ttl',
+        lineNum,
+        foreverMatch[0],
+        'Unbounded cache storage detected (Cache::forever / Cache::rememberForever). Mutable data must have an explicit TTL or invalidation tags.',
+        'Specify an explicit TTL (e.g. now()->addMinutes(30)) or use cache tags with invalidation.'
+      );
+    }
+
+    // Check Cache::put with missing TTL (only 2 arguments)
+    const putRegex = /\bCache::put\s*\(([^)]+)\)/gi;
+    let putMatch;
+    while ((putMatch = putRegex.exec(code)) !== null) {
+      const args = putMatch[1].split(',');
+      if (args.length < 3) {
+        const lineNum = code.substring(0, putMatch.index).split('\n').length;
+        addViolation(
+          'cache_unbounded_ttl',
+          lineNum,
+          putMatch[0],
+          'Cache::put() invoked without explicit TTL expiration argument.',
+          'Provide an explicit TTL expiration argument to Cache::put($key, $value, $ttl).'
+        );
+      }
+    }
+  }
+
+  /**
+   * Evaluate transactional events missing ShouldHandleEventsAfterCommit
+   */
+  static evaluateEvents(parsed, addViolation) {
+    if (parsed.layer === 'Event') {
+      const implementsAfterCommit = (parsed.implementsInterfaces || []).some(i => i.includes('ShouldHandleEventsAfterCommit')) ||
+                                    (parsed.sourceCode || '').includes('ShouldHandleEventsAfterCommit');
+      const isTransactional = /Created|Updated|Deleted|Paid|Completed|Processed/i.test(parsed.className);
+      if (isTransactional && !implementsAfterCommit) {
+        addViolation(
+          'event_after_commit_missing',
+          1,
+          `class ${parsed.className}`,
+          `Transactional event "${parsed.className}" does not implement ShouldHandleEventsAfterCommit.`,
+          'Implement ShouldHandleEventsAfterCommit on the Event class or dispatch after DB::transaction completes.'
+        );
+      }
+    }
+  }
+
+  /**
+   * Evaluate multi-tenant unscoped queries
+   */
+  static evaluateMultiTenancy(parsed, addViolation, config = {}) {
+    const isMultiTenant = config.multi_tenancy?.enabled ||
+      /tenant/i.test(parsed.filePath || '') ||
+      /tenant/i.test(parsed.namespace || '') ||
+      /tenant/i.test(parsed.className || '') ||
+      /(?:withoutTenancy|BelongsToTenant)/i.test(parsed.cleanCode || '');
+
+    if (!isMultiTenant) return;
+
+    const code = parsed.cleanCode || '';
+
+    // Check for unscoped query escapes in controllers, actions, or repositories
+    const unscopedMatch = code.match(/(?:::|->)(?:withoutGlobalScopes|withoutTenancy)\s*\(/i);
+    if (unscopedMatch) {
+      const lineNum = code.substring(0, unscopedMatch.index).split('\n').length;
+      addViolation(
+        'tenant_unscoped_query',
+        lineNum,
+        unscopedMatch[0],
+        'Unscoped multi-tenant query detected (withoutTenancy / withoutGlobalScopes). Risk of cross-tenant data leakage!',
+        'Apply BelongsToTenant trait or add explicit tenant_id scoping to prevent cross-tenant data leakage.'
+      );
+    }
+
+    // If parsed file is a tenant model, ensure it has tenant trait or scope
+    if (parsed.layer === 'Model' && (parsed.filePath.includes('/tenant/') || parsed.filePath.includes('/tenants/') || /^Tenant/i.test(parsed.className || ''))) {
+      if (!parsed.isTenantScoped) {
+        addViolation(
+          'tenant_unscoped_query',
+          1,
+          `class ${parsed.className}`,
+          `Tenant model "${parsed.className}" is missing tenant scoping trait (e.g. BelongsToTenant).`,
+          'Apply BelongsToTenant trait or add explicit tenant_id scoping to prevent cross-tenant data leakage.'
+        );
       }
     }
   }

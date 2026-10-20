@@ -107,7 +107,7 @@ Granular inspector for deep debugging, code reviews, and running optional extern
   - `enable_semantic_review` (boolean, optional): Run conditional AI semantic review on clean code.
 
 ### 3. `get_architecture_rules`
-Returns the project's canonical architecture contract, flow sequence, 28 rule definitions, severities, and path conventions without scanning source code.
+Returns the project's canonical architecture contract, flow sequence, 29 rule definitions, severities, and path conventions without scanning source code.
 
 ### 4. `analyze_project_architecture`
 Comprehensive project-wide architecture health inspection.
@@ -131,10 +131,26 @@ Interactive architectural remediation guide for Laravel Clean Architecture rules
 
 ### 6. `validate_layer_contract`
 Validates whether a specific class adheres strictly to its layer contract (e.g. RepositoryInterface fulfillment for Repositories, single-purpose invokable contract for Actions, immutability for DTOs, authorization for Controllers, Resource response wrapping, loop-free Observers).
+- **Parameters:**
+  - `file_path` (string, required): File path or virtual class path to validate.
+  - `code` (string, optional): PHP source code (read from disk if omitted).
+  - `expected_layer` (string, optional): Explicit layer expectation (Controller, FormRequest, DTO, Action, Repository, Model, Observer, etc.).
+
+### 7. `architecture_remediate_mimo`
+Invokes Xiaomi MiMo (or configured fallback LLM) to automatically refactor non-compliant Laravel PHP code into canonical clean architecture classes (Controller -> FormRequest -> DTO -> Action -> RepositoryInterface).
+- **Parameters:**
+  - `file_path` (string, required): Path of the violating PHP file to refactor.
+  - `code` (string, optional): File content (auto-read from disk if omitted).
+  - `violations` (array, optional): Array of detected violations (auto-scanned if omitted).
+  - `workspace_path` (string, optional): Optional project root path.
+- **Returns:**
+  - `remediated_code`: Refactored clean architecture code.
+  - `explanation`: Detailed architectural breakdown of refactorings performed.
+  - `model_used`: Identifying the LLM reviewer that performed the remediation.
 
 ---
 
-## 📏 28 Canonical Architecture Rules
+## 📏 29 Canonical Architecture Rules
 
 | Rule ID | Severity | Category | Canonical Requirement |
 | :--- | :---: | :---: | :--- |

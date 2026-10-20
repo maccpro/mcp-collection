@@ -35,11 +35,13 @@ export class CrossModuleChecker {
         continue; // Internal import within the same module is allowed
       }
 
-      // Check if the target path is an internal forbidden layer
-      const forbiddenInternals = ['Models', 'Repositories', 'Actions', 'Services', 'Http'];
-      const targetLayer = targetSubPath.split('\\')[0];
+      // Check if the target path contains internal forbidden layers (including in DDD subdirectories like Domain\Models)
+      const forbiddenInternals = ['models', 'repositories', 'actions', 'services', 'http'];
+      const pathSegments = targetSubPath.toLowerCase().split(/[\\/]/);
+      const isPublicContract = pathSegments.includes('contracts') || pathSegments.includes('events') || pathSegments.includes('dtos');
+      const violatingSegment = pathSegments.find(seg => forbiddenInternals.includes(seg));
 
-      if (forbiddenInternals.some(f => f.toLowerCase() === targetLayer.toLowerCase())) {
+      if (violatingSegment && !isPublicContract) {
         violations.push({
           id: `VIO-MOD-${Math.random().toString(36).substr(2, 6).toUpperCase()}`,
           file: parsed.filePath,
@@ -51,7 +53,7 @@ export class CrossModuleChecker {
           layer: parsed.layer,
           snippet: imp.statement,
           message: `Cross-module boundary violation: Module "${currentModule}" directly imports internal class "${imp.classPath}" of Module "${otherModule}".`,
-          fix: `Do not import ${otherModule}'s internal ${targetLayer}. Expose and import via ${otherModule}\\Contracts\\ or publish domain Events.`
+          fix: `Do not import ${otherModule}'s internal ${violatingSegment}. Expose and import via ${otherModule}\\Contracts\\ or publish domain Events.`
         });
       }
     }

@@ -24,6 +24,8 @@ export class StaticAnalyzer {
     let inDoubleQuote = false;
     let inMultiComment = false;
     let inSingleComment = false;
+    let inHeredoc = false;
+    let heredocId = '';
 
     while (i < len) {
       const char = sourceCode[i];
@@ -42,7 +44,7 @@ export class StaticAnalyzer {
         continue;
       }
 
-      // Inside single-line comment // or #
+      // Inside single-line comment // or # (excluding PHP 8 attributes #[...])
       if (inSingleComment) {
         if (char === '\n') {
           inSingleComment = false;
@@ -50,6 +52,25 @@ export class StaticAnalyzer {
         } else {
           result += ' ';
         }
+        i++;
+        continue;
+      }
+
+      // Inside Heredoc / Nowdoc
+      if (inHeredoc) {
+        if (char === '\n') {
+          // Check if the next line starts with heredocId;?
+          const rest = sourceCode.substring(i + 1);
+          const closeMatch = rest.match(/^([a-zA-Z0-9_]+);?\s*(\r?\n|$)/);
+          if (closeMatch && closeMatch[1] === heredocId) {
+            inHeredoc = false;
+            result += '\n';
+            result += ' '.repeat(closeMatch[0].length);
+            i += 1 + closeMatch[0].length;
+            continue;
+          }
+        }
+        result += char === '\n' ? '\n' : ' ';
         i++;
         continue;
       }
@@ -84,6 +105,20 @@ export class StaticAnalyzer {
         continue;
       }
 
+      // Check Heredoc / Nowdoc start: <<<TAG or <<<'TAG'
+      if (char === '<' && sourceCode.startsWith('<<<', i)) {
+        const after = sourceCode.substring(i + 3);
+        const openMatch = after.match(/^\s*['"]?([a-zA-Z0-9_]+)['"]?\r?\n/);
+        if (openMatch) {
+          inHeredoc = true;
+          heredocId = openMatch[1];
+          const skipLen = 3 + openMatch[0].length;
+          result += ' '.repeat(skipLen);
+          i += skipLen;
+          continue;
+        }
+      }
+
       // Check comments start
       if (char === '/' && nextChar === '*') {
         inMultiComment = true;
@@ -92,7 +127,8 @@ export class StaticAnalyzer {
         continue;
       }
 
-      if ((char === '/' && nextChar === '/') || char === '#') {
+      // Single-line comment: // or # (PHP 8 attributes start with #[ so ignore #[)
+      if ((char === '/' && nextChar === '/') || (char === '#' && nextChar !== '[')) {
         inSingleComment = true;
         result += (char === '/' ? '  ' : ' ');
         i += (char === '/' ? 2 : 1);
@@ -153,18 +189,25 @@ export class StaticAnalyzer {
       }
     }
 
-    // 3. Extract Imports (use ...;) with line numbers
+    // 3. Extract Imports (use ...;) with line numbers (excluding closures and class-body traits)
     const imports = [];
-    const useRegex = /\buse\s+([^;]+);/gi;
+    const classDeclMatch = cleanCode.match(/\b(?:readonly\s+)?(class|interface|trait|enum)\s+[a-zA-Z0-9_]+/i);
+    const headerCode = classDeclMatch ? cleanCode.substring(0, classDeclMatch.index) : cleanCode;
+
+    const useRegex = /\buse\s+([^;()]+);/gi;
     let match;
-    while ((match = useRegex.exec(cleanCode)) !== null) {
+    while ((match = useRegex.exec(headerCode)) !== null) {
       const fullStatement = match[1].trim();
+      if (fullStatement.startsWith('function ') || fullStatement.startsWith('const ')) {
+        continue;
+      }
       const lineNum = cleanCode.substring(0, match.index).split('\n').length;
       
       // Support multiple grouped or comma-separated imports
       const parts = fullStatement.split(',');
       for (const part of parts) {
         const trimmed = part.trim();
+        if (!trimmed) continue;
         let alias = null;
         let importClass = trimmed;
         const asMatch = trimmed.match(/^(.+?)\s+as\s+(.+)$/i);
@@ -253,123 +296,124 @@ export class StaticAnalyzer {
   /**
    * Determine canonical architectural layer among 18 enterprise layers
    */
-  static detectLayer(filePath, namespace, className, extendsClass, implementsInterfaces = [], classType = 'class') {
-    const target = `${filePath} ${namespace} ${className} ${extendsClass || ''}`.toLowerCase();
+  static detectLayer(filePath, namespace = '', className = '', extendsClass = null, implementsInterfaces = [], classType = 'class') {
+    const fPath = (filePath || '').toLowerCase();
+    const cName = (className || '').toLowerCase();
+    const ext = (extendsClass || '').toLowerCase();
+    const ifaces = (implementsInterfaces || []).map(i => i.toLowerCase());
 
     // 1. Migration
-    if (filePath.includes('/migrations/') || target.includes('migration') || extendsClass === 'Migration') {
+    if (fPath.includes('/migrations/') || ext === 'migration' || cName.endsWith('migration')) {
       return 'Migration';
     }
 
-    // 2. Controller
-    if (target.includes('controller') || filePath.includes('/controllers/')) {
+    // 2. Repository Interface
+    if (classType === 'interface' && (cName.endsWith('repositoryinterface') || cName.endsWith('repositorycontract') || fPath.includes('/repositories/'))) {
+      return 'RepositoryInterface';
+    }
+
+    // 3. Controller
+    if (cName.endsWith('controller') || fPath.includes('/controllers/') || ext === 'controller' || ext.endsWith('controller')) {
       return 'Controller';
     }
 
-    // 3. FormRequest
-    if ((target.includes('request') && !target.includes('repository')) || filePath.includes('/requests/') || extendsClass === 'FormRequest') {
+    // 4. Action
+    if (cName.endsWith('action') || fPath.includes('/actions/')) {
+      return 'Action';
+    }
+
+    // 5. Exception
+    if (cName.endsWith('exception') || fPath.includes('/exceptions/') || ext === 'exception' || ext === 'throwable') {
+      return 'Exception';
+    }
+
+    // 6. Observer
+    if (cName.endsWith('observer') || fPath.includes('/observers/')) {
+      return 'Observer';
+    }
+
+    // 7. Listener
+    if (cName.endsWith('listener') || fPath.includes('/listeners/')) {
+      return 'Listener';
+    }
+
+    // 8. Event
+    if (cName.endsWith('event') || (fPath.includes('/events/') && !cName.endsWith('listener'))) {
+      return 'Event';
+    }
+
+    // 9. Job
+    if (cName.endsWith('job') || fPath.includes('/jobs/') || ifaces.some(i => i.includes('shouldqueue'))) {
+      return 'Job';
+    }
+
+    // 10. Notification
+    if (cName.endsWith('notification') || fPath.includes('/notifications/') || ext === 'notification') {
+      return 'Notification';
+    }
+
+    // 11. FormRequest (strictly excluding Action, Event, Job, Notification, and Repository)
+    if (
+      ext === 'formrequest' ||
+      fPath.includes('/requests/') ||
+      (cName.endsWith('request') && !cName.endsWith('action') && !cName.endsWith('event') && !cName.endsWith('job') && !cName.endsWith('notification') && !cName.endsWith('repository'))
+    ) {
       return 'FormRequest';
     }
 
-    // 4. DTO
+    // 12. DTO
     if (
-      target.includes('dto') ||
-      filePath.includes('/dtos/') ||
-      filePath.includes('/datatransferobjects/') ||
-      implementsInterfaces.some(i => i.includes('Data'))
+      cName.endsWith('dto') ||
+      cName.endsWith('data') ||
+      fPath.includes('/dtos/') ||
+      fPath.includes('/datatransferobjects/') ||
+      ifaces.some(i => i.includes('data'))
     ) {
       return 'DTO';
     }
 
-    // 5. Policy
-    if (filePath.includes('/policies/') || target.includes('policy') || extendsClass === 'Policy') {
+    // 13. Policy
+    if (cName.endsWith('policy') || fPath.includes('/policies/') || ext === 'policy') {
       return 'Policy';
     }
 
-    // 6. Action
-    if (target.includes('action') || filePath.includes('/actions/')) {
-      return 'Action';
+    // 14. Resource / JsonResource
+    if (cName.endsWith('resource') || fPath.includes('/resources/') || ext === 'jsonresource' || ext === 'resourcecollection') {
+      return 'Resource';
     }
 
-    // 7. Service
-    if (target.includes('service') || filePath.includes('/services/')) {
-      return 'Service';
+    // 15. Response
+    if (cName.endsWith('response') || fPath.includes('/responses/') || ext === 'jsonresponse' || ext === 'response') {
+      return 'Response';
     }
 
-    // 8. Repository Interface
+    // 16. Repository
     if (
-      classType === 'interface' &&
-      (target.includes('repository') || target.includes('repo') || filePath.includes('/repositories/'))
-    ) {
-      return 'RepositoryInterface';
-    }
-
-    // 9. Repository
-    if (
-      target.includes('repository') ||
-      filePath.includes('/repositories/') ||
-      implementsInterfaces.some(i => /RepositoryInterface$|RepositoryContract$/i.test(i))
+      cName.endsWith('repository') ||
+      fPath.includes('/repositories/') ||
+      ifaces.some(i => /repositoryinterface$|repositorycontract$/i.test(i))
     ) {
       return 'Repository';
     }
 
-    // 10. Model
+    // 17. Service
+    if (cName.endsWith('service') || fPath.includes('/services/')) {
+      return 'Service';
+    }
+
+    // 18. Model
     if (
-      filePath.includes('/models/') ||
-      target.includes('model') ||
-      extendsClass === 'Model' ||
-      extendsClass === 'Authenticatable' ||
-      extendsClass === 'Pivot'
+      cName.endsWith('model') ||
+      fPath.includes('/models/') ||
+      ext === 'model' ||
+      ext === 'authenticatable' ||
+      ext === 'pivot'
     ) {
       return 'Model';
     }
 
-    // 11. Resource / JsonResource
-    if (filePath.includes('/resources/') || target.includes('resource') || extendsClass === 'JsonResource' || extendsClass === 'ResourceCollection') {
-      return 'Resource';
-    }
-
-    // 12. Response
-    if (filePath.includes('/responses/') || target.includes('response') || extendsClass === 'JsonResponse' || extendsClass === 'Response') {
-      return 'Response';
-    }
-
-    // 13. Event
-    if (filePath.includes('/events/') || (target.includes('event') && !target.includes('listener'))) {
-      return 'Event';
-    }
-
-    // 14. Listener
-    if (filePath.includes('/listeners/') || target.includes('listener')) {
-      return 'Listener';
-    }
-
-    // 15. Job
-    if (
-      filePath.includes('/jobs/') ||
-      (target.includes('job') && !target.includes('listener') && !target.includes('event')) ||
-      implementsInterfaces.some(i => i.includes('ShouldQueue'))
-    ) {
-      return 'Job';
-    }
-
-    // 16. Notification
-    if (filePath.includes('/notifications/') || target.includes('notification') || extendsClass === 'Notification') {
-      return 'Notification';
-    }
-
-    // 17. Observer
-    if (filePath.includes('/observers/') || target.includes('observer')) {
-      return 'Observer';
-    }
-
-    // 18. Exception
-    if (filePath.includes('/exceptions/') || target.includes('exception') || extendsClass === 'Exception' || extendsClass === 'Throwable') {
-      return 'Exception';
-    }
-
     // 19. Middleware
-    if (filePath.includes('/middleware/') || target.includes('middleware')) {
+    if (cName.endsWith('middleware') || fPath.includes('/middleware/')) {
       return 'Middleware';
     }
 
@@ -428,7 +472,7 @@ export class StaticAnalyzer {
    */
   static extractMethods(cleanCode, rawLines) {
     const methods = [];
-    const methodRegex = /\b(public|protected|private)?\s+function\s+([a-zA-Z0-9_]+)\s*\(([^)]*)\)/gi;
+    const methodRegex = /\b(public|protected|private)?\s*(?:static\s+|final\s+|abstract\s+)*(?:readonly\s+)?function\s+([a-zA-Z0-9_]+)\s*\(([^)]*)\)/gi;
     let match;
 
     while ((match = methodRegex.exec(cleanCode)) !== null) {
@@ -480,17 +524,25 @@ export class StaticAnalyzer {
     const ctor = methods.find(m => m.name === '__construct');
     if (!ctor || !ctor.params) return injections;
 
-    // Parameter formats: private CreateInvoiceAction $action, InvoiceRepositoryInterface $repo
+    // Parameter formats: private ?InvoiceRepositoryInterface $repo = null,
+    // InvoiceRepositoryInterface|OtherInterface $repo,
+    // #[SensitiveParameter] private CreateInvoiceAction $action
     const paramParts = ctor.params.split(',');
     for (const part of paramParts) {
       const trimmed = part.trim();
       if (!trimmed) continue;
 
-      const m = trimmed.match(/(?:(public|protected|private)\s+)?(?:readonly\s+)?([a-zA-Z0-9_\\]+)\s+\$([a-zA-Z0-9_]+)/i);
+      // Strip any PHP 8 attributes #[...]
+      const cleanParam = trimmed.replace(/#\[[^\]]*\]/g, '').trim();
+
+      const m = cleanParam.match(/(?:(public|protected|private)\s+)?(?:readonly\s+)?(?:\?)?([a-zA-Z0-9_\\]+(?:[|&][a-zA-Z0-9_\\]+)*)\s+\$([a-zA-Z0-9_]+)/i);
       if (m) {
+        const fullType = m[2];
+        const primaryType = fullType.split(/[|&]/)[0].replace(/^\\/, '');
         injections.push({
           visibility: m[1] || 'public',
-          type: m[2],
+          type: primaryType,
+          fullType,
           name: m[3],
           line: ctor.startLine
         });
@@ -516,9 +568,8 @@ export class StaticAnalyzer {
       // Detect SQL Injection risks: variable concatenation ($var . "...") or interpolation inside double quotes ("...$var...")
       const hasConcatenation = /\.\s*\$[a-zA-Z0-9_]+/i.test(args) || /\$[a-zA-Z0-9_]+\s*\./i.test(args);
       const hasDirectVarInString = /"[^"]*\$[a-zA-Z0-9_]+[^"]*"/i.test(args);
-      const hasBindings = args.includes(',') || args.includes('?');
 
-      const isRisky = (hasConcatenation || hasDirectVarInString) && !hasBindings;
+      const isRisky = hasConcatenation || hasDirectVarInString;
 
       calls.push({
         method: methodName,

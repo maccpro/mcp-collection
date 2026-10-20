@@ -195,6 +195,23 @@ export class RelationalArchitectureEngine {
       }
     }
 
+    // Check same namespace
+    if (currentFile.namespace) {
+      const sameNsFqn = `${currentFile.namespace}\\${shortOrFqn}`;
+      if (graph.nodes.has(sameNsFqn)) {
+        return sameNsFqn;
+      }
+    }
+
+    // Check same module first if modular
+    if (currentFile.moduleName) {
+      for (const [id, node] of graph.nodes.entries()) {
+        if (node.className === shortOrFqn && node.module === currentFile.moduleName) {
+          return id;
+        }
+      }
+    }
+
     // Check by short class name in graph nodes
     for (const [id, node] of graph.nodes.entries()) {
       if (node.className === shortOrFqn) {
