@@ -215,16 +215,30 @@ export class MigrationEngine {
         const revertLines = [];
 
         for (const col of columns) {
-          let line = DialectManager.mapLaravelColumn(col.type || 'string', col.name, col, dialect);
-          // Strip semicolon and append ->change();
-          line = line.replace(/;$/, '->change();');
-          modifyLines.push(line);
+          if (dialect === 'postgresql' && col.using) {
+            const targetType = col.type || 'varchar';
+            const usingExpr = typeof col.using === 'string' ? col.using : `${col.name}::${targetType}`;
+            modifyLines.push(`// PostgreSQL explicit cast to prevent conversion failures`);
+            modifyLines.push(`DB::statement("ALTER TABLE ${tableName} ALTER COLUMN ${col.name} TYPE ${targetType} USING ${usingExpr};");`);
+          } else {
+            let line = DialectManager.mapLaravelColumn(col.type || 'string', col.name, col, dialect);
+            // Strip semicolon and append ->change();
+            line = line.replace(/;$/, '->change();');
+            modifyLines.push(line);
+          }
 
           if (col.previous_type || col.from_type) {
-            const prevOptions = col.previous_options || { nullable: col.previous_nullable };
-            let prevLine = DialectManager.mapLaravelColumn(col.previous_type || col.from_type, col.name, prevOptions, dialect);
-            prevLine = prevLine.replace(/;$/, '->change();');
-            revertLines.push(prevLine);
+            const prevType = col.previous_type || col.from_type;
+            if (dialect === 'postgresql' && col.using) {
+              const revertUsing = col.revert_using || `${col.name}::${prevType}`;
+              revertLines.push(`// PostgreSQL revert cast`);
+              revertLines.push(`DB::statement("ALTER TABLE ${tableName} ALTER COLUMN ${col.name} TYPE ${prevType} USING ${revertUsing};");`);
+            } else {
+              const prevOptions = col.previous_options || { nullable: col.previous_nullable };
+              let prevLine = DialectManager.mapLaravelColumn(prevType, col.name, prevOptions, dialect);
+              prevLine = prevLine.replace(/;$/, '->change();');
+              revertLines.push(prevLine);
+            }
           } else {
             revertLines.push(`// Revert '${col.name}' definition here (requires previous column type)`);
           }

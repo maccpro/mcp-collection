@@ -105,12 +105,24 @@ class LockAuditor {
 
         case 'change_column_type':
         case 'modify_column': {
+          let lockType = 'ALGORITHM=COPY (Exclusive Table Lock)';
+          let desc = `Changing column data type forces a full table rewrite, holding exclusive locks for the duration of the operation. On ${estimated_rows.toLocaleString()} rows, this will block all reads and writes.`;
+          let mitig = 'Use the Expand-Contract pattern: 1) Add new_col, 2) Dual-write in application, 3) Backfill historical rows in chunks, 4) Switch readers to new_col, 5) Drop old_col.';
+
+          if (normalizedDialect === 'postgresql') {
+            lockType = 'AccessExclusiveLock (Full Table Rewrite)';
+          } else if (normalizedDialect === 'sqlite') {
+            lockType = 'Full Database Lock / Unsupported ALTER';
+            desc = 'SQLite does not support ALTER TABLE ... MODIFY/CHANGE COLUMN. Table recreation required.';
+            mitig = 'SQLite requires a 12-step table recreation pattern: CREATE TABLE temp_table (...); INSERT INTO temp_table SELECT ...; DROP TABLE original_table; ALTER TABLE temp_table RENAME TO original_table;';
+          }
+
           hazards.push({
             operation: `MODIFY/CHANGE COLUMN ${colName}`,
             risk_level: 'CRITICAL',
-            lock_type: normalizedDialect === 'postgresql' ? 'AccessExclusiveLock (Full Table Rewrite)' : 'ALGORITHM=COPY (Exclusive Table Lock)',
-            description: `Changing column data type forces a full table rewrite, holding exclusive locks for the duration of the operation. On ${estimated_rows.toLocaleString()} rows, this will block all reads and writes.`,
-            mitigation: 'Use the Expand-Contract pattern: 1) Add new_col, 2) Dual-write in application, 3) Backfill historical rows in chunks, 4) Switch readers to new_col, 5) Drop old_col.'
+            lock_type: lockType,
+            description: desc,
+            mitigation: mitig
           });
           highestRisk = 'CRITICAL';
           break;

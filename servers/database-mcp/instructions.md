@@ -84,4 +84,21 @@ It operates **100% offline, deterministic, zero-token, and free**, strictly adhe
 ---
 
 ### 9. High-Volume Table Partitioning (`db_partitioning_advisor`)
-- For tables exceeding 10M+ rows (ERP ledgers, audit logs, invoice items), use `db_partitioning_advisor` to generate declarative Range or List partitioning migrations and detachment runbooks.
+- For tables exceeding 10M+ rows (ERP ledgers, audit logs, invoice items), use `db_partitioning_advisor` to generate declarative Range or List partitioning migrations, batched backfill loops, zero-downtime cutover swaps, and partition detachment runbooks.
+
+---
+
+### 10. Hardware Sizing & Engine Parameter Tuning (`db_tune_server_config`)
+- Calculates exact configuration profiles (`postgresql.conf`, `my.cnf`, and SQLite WAL PRAGMAs) dynamically tuned to server hardware:
+  - Memory allocation: `shared_buffers`, `effective_cache_size`, `work_mem`, `innodb_buffer_pool_size`.
+  - Storage I/O: NVMe SSD concurrency parameters (`random_page_cost = 1.1`, `effective_io_concurrency = 200`, `innodb_io_capacity = 2000`).
+  - OS Kernel sysctl optimizations: `vm.swappiness = 10`, `fs.file-max`, and transparent huge page guidelines.
+
+---
+
+### 11. Disaster Recovery & Hot Backup Runbooks (`db_backup_restore_runbook`)
+- Generates verified, zero-downtime hot backup scripts, continuous WAL/binlog archiving configurations, and Point-In-Time Recovery (PITR) procedures:
+  - **MariaDB:** `mariabackup --backup` with non-blocking transactional consistency.
+  - **MySQL:** Online physical and logical dumps (`mysqldump --single-transaction --quick`).
+  - **PostgreSQL:** `pg_basebackup` with continuous streaming WAL replication.
+  - **SQLite:** Zero-downtime hot backups via native `VACUUM INTO` API.

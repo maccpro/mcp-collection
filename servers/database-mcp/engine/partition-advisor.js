@@ -124,6 +124,16 @@ ALTER TABLE ${tableName} PARTITION BY RANGE (YEAR(${partitionColumn})) (\n`;
           ? `ALTER TABLE ${tableName}_partitioned DETACH PARTITION ${partitionList[0]} CONCURRENTLY;`
           : `ALTER TABLE ${tableName} DROP PARTITION ${partitionList[0]};`,
         explanation: 'Detach historical partitions to cold storage or drop them instantly without locking active tables.'
+      },
+      cutover_runbook: {
+        step1_ddl: migration.migration_code,
+        step2_batched_backfill_sql: `-- Copy existing rows in bounded batches to avoid log bloat and replica lag\nINSERT INTO ${tableName}_partitioned SELECT * FROM ${tableName} WHERE id BETWEEN :start_id AND :end_id;`,
+        batch_chunk_size: 10000,
+        batch_sleep_ms: 100,
+        step3_atomic_swap_sql: dialect.includes('postgres')
+          ? `BEGIN;\nALTER TABLE ${tableName} RENAME TO ${tableName}_old;\nALTER TABLE ${tableName}_partitioned RENAME TO ${tableName};\nCOMMIT;`
+          : `RENAME TABLE ${tableName} TO ${tableName}_old, ${tableName}_partitioned TO ${tableName};`,
+        explanation: 'Enterprise zero-downtime cutover: 1) Deploy partitioned structure, 2) Backfill historical rows in batches with pause/sleep, 3) Execute atomic table rename.'
       }
     };
   }

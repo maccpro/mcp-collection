@@ -330,6 +330,36 @@ class QueryAnalyzer {
       return tablePredicates[tbl];
     };
 
+    // Extract JOIN ... ON equality foreign keys
+    const joinOnRegex = /\bJOIN\s+[`"']?([a-zA-Z0-9_]+)[`"']?(?:\s+(?:AS\s+)?([a-zA-Z0-9_]+))?\s+ON\s+([^;]+?)(?=\bJOIN\b|\bWHERE\b|\bORDER\b|\bGROUP\b|\bLIMIT\b|$)/gi;
+    let jMatch;
+    while ((jMatch = joinOnRegex.exec(sql)) !== null) {
+      const onClause = jMatch[3];
+      const eqPairRegex = /(?:[`"']?([a-zA-Z0-9_]+)[`"']?\.)?[`"']?([a-zA-Z0-9_]+)[`"']?\s*=\s*(?:[`"']?([a-zA-Z0-9_]+)[`"']?\.)?[`"']?([a-zA-Z0-9_]+)[`"']?/gi;
+      let p;
+      while ((p = eqPairRegex.exec(onClause)) !== null) {
+        const p1 = p[1], c1 = p[2], p2 = p[3], c2 = p[4];
+        if (c1 && !/^[0-9]+$/.test(c1) && !['and', 'or'].includes(c1.toLowerCase())) {
+          const t1 = getTableForAlias(p1);
+          if (c1.toLowerCase() !== 'id') {
+            const tEsr = initTableEsr(t1);
+            if (!tEsr.equality.includes(c1.toLowerCase())) {
+              tEsr.equality.push(c1.toLowerCase());
+            }
+          }
+        }
+        if (c2 && !/^[0-9]+$/.test(c2) && !['and', 'or'].includes(c2.toLowerCase())) {
+          const t2 = getTableForAlias(p2);
+          if (c2.toLowerCase() !== 'id') {
+            const tEsr = initTableEsr(t2);
+            if (!tEsr.equality.includes(c2.toLowerCase())) {
+              tEsr.equality.push(c2.toLowerCase());
+            }
+          }
+        }
+      }
+    }
+
     const whereMatch = sql.match(/\bWHERE\b(.*?)(?:\bORDER\s+BY\b|\bGROUP\s+BY\b|\bLIMIT\b|$)/i);
     if (whereMatch && whereMatch[1]) {
       const whereClause = whereMatch[1];

@@ -1,6 +1,6 @@
 /**
  * @file run-tests.js
- * @description Enterprise Test Suite for @maccpro/database-mcp (v1.2.0)
+ * @description Enterprise Test Suite for @maccpro/database-mcp (v1.2.2)
  * Validates DialectManager, MigrationEngine, QueryAnalyzer, LockAuditor,
  * SchemaModeler, ConfigTuner, MaintenanceEngine, ExplainAnalyzer, QualityGate,
  * SeederGenerator, and PartitionAdvisor across MariaDB, MySQL, PostgreSQL & SQLite.
@@ -41,7 +41,7 @@ function runTest(name, fn) {
   }
 }
 
-console.log('\n--- Starting database-mcp Verification Suite (v1.2.1) ---\n');
+console.log('\n--- Starting database-mcp Verification Suite (v1.2.2) ---\n');
 
 // ==========================================
 // 1. DialectManager Tests
@@ -621,6 +621,82 @@ return new class extends Migration {
     if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
     if (fs.existsSync(tmpDir)) fs.rmdirSync(tmpDir);
   }
+});
+
+runTest('QueryAnalyzer: JOIN ... ON foreign key extraction into joined table ESR', () => {
+  const query = `
+    SELECT u.name, o.id, o.amount
+    FROM users u
+    JOIN orders o ON u.id = o.user_id
+    WHERE u.status = 'active' AND o.status = 'completed';
+  `;
+  const report = QueryAnalyzer.analyze({ query, dialect: 'postgresql' });
+  const ordersRec = report.joined_table_indexes.find(j => j.table === 'orders');
+  assert.ok(ordersRec, 'Must have recommended index for orders table');
+  assert.ok(ordersRec.columns.includes('user_id'), `orders index must include user_id from JOIN condition, got: ${ordersRec?.columns}`);
+});
+
+runTest('ExplainAnalyzer: PostgreSQL Parallel Seq Scan recognition', () => {
+  const parallelPlan = [
+    {
+      "Plan": {
+        "Node Type": "Gather",
+        "Total Cost": 1500.0,
+        "Plan Rows": 10000,
+        "Plans": [
+          {
+            "Node Type": "Parallel Seq Scan",
+            "Relation Name": "transactions",
+            "Total Cost": 1200.0,
+            "Plan Rows": 5000
+          }
+        ]
+      }
+    }
+  ];
+  const report = ExplainAnalyzer.analyze({ plan: JSON.stringify(parallelPlan), dialect: 'postgresql' });
+  assert.strictEqual(report.summary.has_sequential_scan, true, 'Parallel Seq Scan must be recognized as sequential scan');
+  assert.ok(report.issues.some(i => i.type === 'SEQUENTIAL_SCAN' && i.target === 'transactions'));
+});
+
+runTest('PartitionAdvisor: cutover runbook with batched backfill and atomic swap', () => {
+  const advice = PartitionAdvisor.advise({ table_name: 'audit_logs', dialect: 'postgresql', partition_type: 'range' });
+  assert.ok(advice.cutover_runbook, 'Must include cutover_runbook');
+  assert.ok(advice.cutover_runbook.step2_batched_backfill_sql.includes('BETWEEN :start_id AND :end_id'));
+  assert.ok(advice.cutover_runbook.step3_atomic_swap_sql.includes('ALTER TABLE audit_logs RENAME TO audit_logs_old;'));
+  assert.strictEqual(advice.cutover_runbook.batch_chunk_size, 10000);
+
+  const mysqlAdv = PartitionAdvisor.advise({ table_name: 'orders', dialect: 'mysql' });
+  assert.ok(mysqlAdv.cutover_runbook.step3_atomic_swap_sql.includes('RENAME TABLE orders TO orders_old, orders_partitioned TO orders;'));
+});
+
+runTest('MigrationEngine: PostgreSQL modify_column with col.using generates USING clause', () => {
+  const migration = MigrationEngine.generate({
+    operation: 'modify_column',
+    table: 'users',
+    dialect: 'postgresql',
+    columns: [
+      { name: 'role_id', type: 'integer', using: 'role_id::integer', previous_type: 'string' }
+    ]
+  });
+  assert.ok(migration.migration_code.includes('DB::statement("ALTER TABLE users ALTER COLUMN role_id TYPE integer USING role_id::integer;");'));
+  assert.ok(migration.migration_code.includes('DB::statement("ALTER TABLE users ALTER COLUMN role_id TYPE string USING role_id::string;");'));
+});
+
+runTest('LockAuditor: SQLite modify_column warns of unsupported ALTER and table recreation', () => {
+  const audit = LockAuditor.audit({
+    dialect: 'sqlite',
+    table: 'products',
+    estimated_rows: 50000,
+    operations: [
+      { type: 'modify_column', column: 'price' }
+    ]
+  });
+  assert.strictEqual(audit.highest_risk_level, 'CRITICAL');
+  const hazard = audit.hazards.find(h => h.operation.includes('price'));
+  assert.ok(hazard, 'Must find hazard for price column');
+  assert.ok(hazard.description.includes('SQLite does not support ALTER TABLE ... MODIFY/CHANGE COLUMN'));
+  assert.ok(hazard.mitigation.includes('table recreation pattern'));
 });
 
 console.log(`\n--- Test Results: ${passed} Passed, ${failed} Failed ---\n`);

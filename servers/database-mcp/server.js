@@ -725,7 +725,7 @@ rl.on('line', async (line) => {
             },
             serverInfo: {
               name: 'database-mcp',
-              version: '1.2.1'
+              version: '1.2.2'
             }
           }
         });

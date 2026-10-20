@@ -138,13 +138,13 @@ export class ExplainAnalyzer {
       scanTypes.push(`${nodeType} (${relationName})`);
     }
 
-    if (nodeType === 'Seq Scan') {
+    if (nodeType === 'Seq Scan' || nodeType === 'Parallel Seq Scan') {
       issues.push({
         type: 'SEQUENTIAL_SCAN',
         severity: 'CRITICAL',
-        node: `Seq Scan on ${relationName}`,
+        node: `${nodeType} on ${relationName}`,
         target: relationName,
-        description: `Sequential scan on table '${relationName}'. Engine reads every disk page sequentially because no matching index exists or predicate is non-SARGable.`
+        description: `Sequential scan (${nodeType}) on table '${relationName}'. Engine reads every disk page sequentially because no matching index exists or predicate is non-SARGable.`
       });
       recommendations.push({
         action: `Add a B-Tree composite index on table '${relationName}' matching the Filter predicate to enable Index Scan or Bitmap Heap Scan.`
