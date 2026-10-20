@@ -1,9 +1,9 @@
 /**
  * @file static-analyzer.js
  * @description Advanced Static PHP Source Code Analyzer (Zero-dependency).
- * Analyzes PHP files, tokenizes structures, detects 14 architectural layers,
+ * Analyzes PHP files, tokenizes structures, detects 18 architectural layers,
  * extracts constructor dependency injections, PHP 8 attributes, traits, Eloquent relations,
- * raw SQL usage, and maintains exact line-number mapping.
+ * raw SQL usage, exception handling blocks, and maintains exact line-number mapping.
  */
 
 export class StaticAnalyzer {
@@ -211,7 +211,7 @@ export class StaticAnalyzer {
     // 6. Multi-Tenancy Markers
     const isTenantScoped = this.detectTenantScope(normalizedPath, traits, extendsClass, sourceCode);
 
-    // 7. Determine 14-Layer Canonical Layer
+    // 7. Determine 18-Layer Canonical Layer
     const layer = this.detectLayer(normalizedPath, namespace, className, extendsClass, implementsInterfaces, classType);
 
     // 8. Extract Methods
@@ -222,6 +222,9 @@ export class StaticAnalyzer {
 
     // 10. Extract Raw SQL Invocations
     const rawSqlCalls = this.extractRawSqlCalls(sourceCode, lines);
+
+    // 11. Extract Empty Catch Blocks (Swallowed Exceptions)
+    const emptyCatches = this.extractEmptyCatches(cleanCode);
 
     return {
       filePath: normalizedPath,
@@ -239,6 +242,7 @@ export class StaticAnalyzer {
       methods,
       injections,
       rawSqlCalls,
+      emptyCatches,
       lines,
       cleanCode,
       sourceCode,
@@ -247,7 +251,7 @@ export class StaticAnalyzer {
   }
 
   /**
-   * Determine canonical architectural layer among 14 enterprise layers
+   * Determine canonical architectural layer among 18 enterprise layers
    */
   static detectLayer(filePath, namespace, className, extendsClass, implementsInterfaces = [], classType = 'class') {
     const target = `${filePath} ${namespace} ${className} ${extendsClass || ''}`.toLowerCase();
@@ -263,7 +267,7 @@ export class StaticAnalyzer {
     }
 
     // 3. FormRequest
-    if (target.includes('request') || filePath.includes('/requests/') || extendsClass === 'FormRequest') {
+    if ((target.includes('request') && !target.includes('repository')) || filePath.includes('/requests/') || extendsClass === 'FormRequest') {
       return 'FormRequest';
     }
 
@@ -277,17 +281,22 @@ export class StaticAnalyzer {
       return 'DTO';
     }
 
-    // 5. Action
+    // 5. Policy
+    if (filePath.includes('/policies/') || target.includes('policy') || extendsClass === 'Policy') {
+      return 'Policy';
+    }
+
+    // 6. Action
     if (target.includes('action') || filePath.includes('/actions/')) {
       return 'Action';
     }
 
-    // 6. Service
+    // 7. Service
     if (target.includes('service') || filePath.includes('/services/')) {
       return 'Service';
     }
 
-    // 7. Repository Interface
+    // 8. Repository Interface
     if (
       classType === 'interface' &&
       (target.includes('repository') || target.includes('repo') || filePath.includes('/repositories/'))
@@ -295,7 +304,7 @@ export class StaticAnalyzer {
       return 'RepositoryInterface';
     }
 
-    // 8. Repository
+    // 9. Repository
     if (
       target.includes('repository') ||
       filePath.includes('/repositories/') ||
@@ -304,7 +313,7 @@ export class StaticAnalyzer {
       return 'Repository';
     }
 
-    // 9. Model
+    // 10. Model
     if (
       filePath.includes('/models/') ||
       target.includes('model') ||
@@ -315,24 +324,53 @@ export class StaticAnalyzer {
       return 'Model';
     }
 
-    // 10. Policy
-    if (filePath.includes('/policies/') || target.includes('policy')) {
-      return 'Policy';
-    }
-
     // 11. Resource / JsonResource
     if (filePath.includes('/resources/') || target.includes('resource') || extendsClass === 'JsonResource' || extendsClass === 'ResourceCollection') {
       return 'Resource';
     }
 
-    // 12. Middleware
-    if (filePath.includes('/middleware/') || target.includes('middleware')) {
-      return 'Middleware';
+    // 12. Response
+    if (filePath.includes('/responses/') || target.includes('response') || extendsClass === 'JsonResponse' || extendsClass === 'Response') {
+      return 'Response';
     }
 
-    // 13. Job / Listener / Event
-    if (filePath.includes('/jobs/') || filePath.includes('/listeners/') || filePath.includes('/events/')) {
+    // 13. Event
+    if (filePath.includes('/events/') || (target.includes('event') && !target.includes('listener'))) {
+      return 'Event';
+    }
+
+    // 14. Listener
+    if (filePath.includes('/listeners/') || target.includes('listener')) {
+      return 'Listener';
+    }
+
+    // 15. Job
+    if (
+      filePath.includes('/jobs/') ||
+      (target.includes('job') && !target.includes('listener') && !target.includes('event')) ||
+      implementsInterfaces.some(i => i.includes('ShouldQueue'))
+    ) {
       return 'Job';
+    }
+
+    // 16. Notification
+    if (filePath.includes('/notifications/') || target.includes('notification') || extendsClass === 'Notification') {
+      return 'Notification';
+    }
+
+    // 17. Observer
+    if (filePath.includes('/observers/') || target.includes('observer')) {
+      return 'Observer';
+    }
+
+    // 18. Exception
+    if (filePath.includes('/exceptions/') || target.includes('exception') || extendsClass === 'Exception' || extendsClass === 'Throwable') {
+      return 'Exception';
+    }
+
+    // 19. Middleware
+    if (filePath.includes('/middleware/') || target.includes('middleware')) {
+      return 'Middleware';
     }
 
     return 'Other';
@@ -492,5 +530,27 @@ export class StaticAnalyzer {
     }
 
     return calls;
+  }
+
+  /**
+   * Extract empty catch blocks that swallow exceptions silently
+   */
+  static extractEmptyCatches(cleanCode) {
+    const catches = [];
+    const catchRegex = /\bcatch\s*\(\s*([^)]+)\s*\)\s*\{([^}]*)\}/gi;
+    let match;
+    while ((match = catchRegex.exec(cleanCode)) !== null) {
+      const exceptionType = match[1].trim();
+      const body = match[2].trim();
+      if (!body || body === '') {
+        const lineNum = cleanCode.substring(0, match.index).split('\n').length;
+        catches.push({
+          line: lineNum,
+          exception: exceptionType,
+          snippet: `catch (${exceptionType}) { }`
+        });
+      }
+    }
+    return catches;
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "laravel-code-pattern-mcp",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "policy": {
     "blocking": [
       "CRITICAL",
@@ -19,12 +19,24 @@
       "Controller",
       "FormRequest",
       "DTO",
+      "Policy",
       "Action",
-      "Service",
       "RepositoryInterface",
       "Repository",
       "Model",
-      "Database"
+      "Resource",
+      "Response"
+    ],
+    "cross_cutting": [
+      "Transaction",
+      "Event",
+      "Listener",
+      "Job",
+      "Notification",
+      "Cache",
+      "AuditLog",
+      "ExceptionHandling",
+      "Observer"
     ],
     "serviceOptional": true,
     "rules": {
@@ -32,11 +44,13 @@
       "controller_direct_db": "ERROR",
       "controller_business_logic": "WARNING",
       "controller_unauthorized_mutation": "ERROR",
+      "controller_raw_model_response": "ERROR",
       "sql_injection_raw_exposure": "CRITICAL",
       "mass_assignment_unguarded": "WARNING",
       "form_request_persistence": "ERROR",
       "form_request_business_logic": "WARNING",
       "dto_persistence": "ERROR",
+      "policy_mutation_hazard": "ERROR",
       "repository_http_dependency": "ERROR",
       "repository_business_logic": "WARNING",
       "repository_missing_interface": "WARNING",
@@ -48,6 +62,12 @@
       "tenant_unscoped_query": "ERROR",
       "n_plus_one_loop_query": "WARNING",
       "unbounded_transaction_boundary": "WARNING",
+      "swallowed_exception_hazard": "ERROR",
+      "observer_recursion_hazard": "ERROR",
+      "job_missing_should_queue": "WARNING",
+      "notification_missing_should_queue": "WARNING",
+      "cache_unbounded_ttl": "WARNING",
+      "event_after_commit_missing": "INFO",
       "circular_dependency_detected": "ERROR"
     }
   },
@@ -104,6 +124,36 @@
       "app/Modules/*/Http/Resources",
       "app/Http/Resources",
       "Modules/*/Http/Resources"
+    ],
+    "events": [
+      "app/Modules/*/Events",
+      "app/Events",
+      "Modules/*/Events"
+    ],
+    "listeners": [
+      "app/Modules/*/Listeners",
+      "app/Listeners",
+      "Modules/*/Listeners"
+    ],
+    "jobs": [
+      "app/Modules/*/Jobs",
+      "app/Jobs",
+      "Modules/*/Jobs"
+    ],
+    "notifications": [
+      "app/Modules/*/Notifications",
+      "app/Notifications",
+      "Modules/*/Notifications"
+    ],
+    "observers": [
+      "app/Modules/*/Observers",
+      "app/Observers",
+      "Modules/*/Observers"
+    ],
+    "exceptions": [
+      "app/Modules/*/Exceptions",
+      "app/Exceptions",
+      "Modules/*/Exceptions"
     ],
     "migrations": {
       "central": [

@@ -1,6 +1,6 @@
 # Instructions for `laravel-code-pattern` MCP Server
 
-The `laravel-code-pattern` MCP server enforces Clean Architecture, Dependency Inversion Principle (DIP), OWASP security patterns, and multi-tenant migration standards for Laravel and PHP systems.
+The `laravel-code-pattern` MCP server enforces the Canonical 10-Stage Request Lifecycle, 8 Cross-Cutting Pillars, Clean Architecture, Dependency Inversion Principle (DIP), OWASP security patterns, and multi-tenant migration standards for Laravel and PHP systems.
 
 ## Mandatory Rules for AI Agents
 
@@ -34,12 +34,27 @@ The `laravel-code-pattern` MCP server enforces Clean Architecture, Dependency In
      }
      ```
 
-3. **Canonical Architecture Flow:**
+3. **Canonical 10-Stage Request-Response Flow:**
    ```text
-   Controller -> FormRequest -> DTO -> Action -> optional Service -> RepositoryInterface -> Repository -> Model -> Database
+   Controller -> FormRequest -> DTO -> Policy -> Action -> RepositoryInterface -> Repository -> Model -> Resource -> Response
    ```
-   - **Controllers:** Thin only. Never import or query Eloquent models or `DB::` directly.
+   - **Controllers:** Thin only ($\le 35$ lines/method). Never import or query Eloquent models or `DB::` directly. Always serialize output through API Resources.
+   - **FormRequests:** Validation and authorization only. Never perform DB persistence or heavy domain logic.
+   - **DTOs:** Pure immutable value objects (`readonly` typed properties).
+   - **Policies:** Pure authorization gates returning boolean. Zero database writes or state mutations.
    - **Actions:** Single-purpose `__invoke()` receiving typed DTOs or primitives. Inject `RepositoryInterface` contracts, never concrete repositories or HTTP Requests.
-   - **FormRequests:** Validation and authorization only. Never perform DB persistence.
-   - **DTOs:** Pure immutable value objects (`readonly`).
+   - **Repositories:** Data storage and queries only. Must implement `RepositoryInterface`. Zero HTTP dependencies or domain rules.
+   - **Models:** Eloquent schema mapping, relationships, mutators, and tenant scoping (`BelongsToTenant`).
+   - **Resources:** API transformers (`JsonResource`, `ResourceCollection`) shielding internal database columns.
+   - **Responses:** Standardized HTTP status codes and envelope formatting.
+
+4. **8 Enterprise Cross-Cutting Pillars:**
+   - **Transaction:** Enclose multi-model mutations in `DB::transaction()`.
+   - **Event / Listener:** Decouple side effects; use `ShouldHandleEventsAfterCommit` when fired during transactions.
+   - **Job / Queue:** Implement `ShouldQueue` and `SerializesModels` on background jobs.
+   - **Notification:** Implement `ShouldQueue` on mail and external alert channels.
+   - **Cache:** Specify explicit TTL in `Cache::remember()` and invalidate tags on model changes.
+   - **Audit Log:** Maintain immutable activity records for sensitive or financial mutations.
+   - **Exception Handling:** Custom domain exceptions; empty catch blocks (`catch (\Exception $e) {}`) are strictly forbidden.
+   - **Observer:** Use `saveQuietly()` or `updateQuietly()` inside model lifecycle hooks to prevent recursive infinite loops.
    - **Multi-Tenant Migrations:** Must strictly reside in `database/migrations/tenant/`.

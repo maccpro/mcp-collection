@@ -1,18 +1,19 @@
 /**
  * @file rules.js
  * @description Architectural Rule Definitions & Comprehensive Evaluator.
- * Evaluates parsed PHP AST/tokens against 20+ enterprise quality gate rules across:
- * Canonical Flow, Security, Multi-Tenancy, Performance, and Relational Boundaries.
+ * Evaluates parsed PHP AST/tokens against 28 enterprise quality gate rules across:
+ * Canonical 10-Stage Request Lifecycle, 8 Cross-Cutting Pillars, Security, Multi-Tenancy,
+ * Performance, and Relational Boundaries.
  */
 
 export const RULE_DEFINITIONS = {
-  // --- Canonical Flow & Layer Rules ---
+  // --- Canonical 10-Stage Request Lifecycle Rules ---
   controller_direct_model: {
     id: 'controller_direct_model',
     name: 'No Direct Model in Controller',
     category: 'CanonicalFlow',
     severity: 'ERROR',
-    description: 'Controllers must never import or query Eloquent Models directly. Flow requires FormRequest -> DTO -> Action -> Repository.',
+    description: 'Controllers must never import or query Eloquent Models directly. Flow requires FormRequest -> DTO -> Policy -> Action -> Repository.',
     fix: 'Remove Model usage from Controller. Delegate orchestration to an Action or Service layer.'
   },
   controller_direct_db: {
@@ -38,6 +39,14 @@ export const RULE_DEFINITIONS = {
     severity: 'ERROR',
     description: 'State-mutating controller methods (store, update, destroy) must enforce authorization via FormRequest or Policy checks.',
     fix: 'Inject a dedicated FormRequest with authorize() or invoke $this->authorize(...) / Gate::authorize(...).'
+  },
+  controller_raw_model_response: {
+    id: 'controller_raw_model_response',
+    name: 'Wrap API Responses in JsonResource',
+    category: 'CanonicalFlow',
+    severity: 'ERROR',
+    description: 'Controllers must serialize responses using an API Resource (e.g. new UserResource($user) or UserResource::collection($users)), rather than returning raw Eloquent Models or collections directly.',
+    fix: 'Wrap model responses in a dedicated JsonResource or ResourceCollection.'
   },
   sql_injection_raw_exposure: {
     id: 'sql_injection_raw_exposure',
@@ -78,6 +87,14 @@ export const RULE_DEFINITIONS = {
     severity: 'ERROR',
     description: 'Data Transfer Objects (DTO) must never perform database persistence or access data layers.',
     fix: 'Make DTO a pure data container with typed readonly properties and fromRequest() factory methods.'
+  },
+  policy_mutation_hazard: {
+    id: 'policy_mutation_hazard',
+    name: 'No Database Mutation in Policy',
+    category: 'CanonicalFlow',
+    severity: 'ERROR',
+    description: 'Policy classes must solely evaluate authorization permissions and return boolean. They must never perform database mutations (save, update, delete).',
+    fix: 'Remove database write/mutation calls from Policy.'
   },
   repository_http_dependency: {
     id: 'repository_http_dependency',
@@ -135,6 +152,66 @@ export const RULE_DEFINITIONS = {
     description: 'Modules must not bypass boundaries by importing another module\'s internal Model, Repository, or Action directly.',
     fix: 'Communicate across modules via Contracts/Interfaces, Events, or published DTOs.'
   },
+
+  // --- Cross-Cutting Concerns Rules ---
+  unbounded_transaction_boundary: {
+    id: 'unbounded_transaction_boundary',
+    name: 'Missing Transaction Boundary on Multi-Table Mutations',
+    category: 'Reliability',
+    severity: 'WARNING',
+    description: 'Multiple database mutations across models without enclosing DB::transaction().',
+    fix: 'Wrap multi-table mutations in DB::transaction(function() { ... }) to ensure atomic consistency.'
+  },
+  swallowed_exception_hazard: {
+    id: 'swallowed_exception_hazard',
+    name: 'Swallowed Exception Hazard',
+    category: 'Reliability',
+    severity: 'ERROR',
+    description: 'Empty catch block detected. Swallowing exceptions conceals system faults and breaks consistency.',
+    fix: 'Log the error via Log::error() or rethrow a specific domain exception.'
+  },
+  observer_recursion_hazard: {
+    id: 'observer_recursion_hazard',
+    name: 'Observer Recursive Mutation Loop',
+    category: 'Reliability',
+    severity: 'ERROR',
+    description: 'Direct model save(), update(), or touch() inside an Observer lifecycle hook can trigger infinite recursive event loops.',
+    fix: 'Use saveQuietly() or updateQuietly() inside Observers to prevent re-triggering lifecycle events.'
+  },
+  job_missing_should_queue: {
+    id: 'job_missing_should_queue',
+    name: 'Background Job Missing ShouldQueue Contract',
+    category: 'CrossCutting',
+    severity: 'WARNING',
+    description: 'Background queue Job does not implement Illuminate\\Contracts\\Queue\\ShouldQueue.',
+    fix: 'Add "implements ShouldQueue" to ensure asynchronous queue execution.'
+  },
+  notification_missing_should_queue: {
+    id: 'notification_missing_should_queue',
+    name: 'Notification Missing ShouldQueue Contract',
+    category: 'CrossCutting',
+    severity: 'WARNING',
+    description: 'Notification sending over external channels should implement ShouldQueue to prevent blocking HTTP workers.',
+    fix: 'Add "implements ShouldQueue" to the Notification class.'
+  },
+  cache_unbounded_ttl: {
+    id: 'cache_unbounded_ttl',
+    name: 'Unbounded Cache Storage',
+    category: 'CrossCutting',
+    severity: 'WARNING',
+    description: 'Using Cache::forever() or caching mutable models without TTL or tag invalidation.',
+    fix: 'Specify an explicit TTL (e.g. now()->addMinutes(30)) or use cache tags with invalidation.'
+  },
+  event_after_commit_missing: {
+    id: 'event_after_commit_missing',
+    name: 'Transactional Event Missing After-Commit Handling',
+    category: 'CrossCutting',
+    severity: 'INFO',
+    description: 'Events dispatched during multi-step database mutations should implement ShouldHandleEventsAfterCommit to prevent processing uncommitted state.',
+    fix: 'Implement ShouldHandleEventsAfterCommit on the Event class or dispatch after DB::transaction completes.'
+  },
+
+  // --- Multi-Tenancy & Performance Rules ---
   tenant_migration_misplacement: {
     id: 'tenant_migration_misplacement',
     name: 'Tenant Migration Misplacement',
@@ -158,14 +235,6 @@ export const RULE_DEFINITIONS = {
     severity: 'WARNING',
     description: 'Database query or relationship call detected inside a loop (foreach/while).',
     fix: 'Eager load relationships before the loop using with(...) or perform batch querying outside the loop.'
-  },
-  unbounded_transaction_boundary: {
-    id: 'unbounded_transaction_boundary',
-    name: 'Missing Transaction Boundary on Multi-Table Mutations',
-    category: 'Reliability',
-    severity: 'WARNING',
-    description: 'Multiple database mutations across models without enclosing DB::transaction().',
-    fix: 'Wrap multi-table mutations in DB::transaction(function() { ... }) to ensure atomic consistency.'
   },
   circular_dependency_detected: {
     id: 'circular_dependency_detected',
@@ -211,8 +280,9 @@ export class RulesEvaluator {
       });
     };
 
-    // 0. Global Security Checks across all layers
+    // 0. Global Security & Reliability Checks
     this.evaluateSecurity(parsed, addViolation);
+    this.evaluateExceptions(parsed, addViolation);
 
     // 1. Controller Layer Checks
     if (parsed.layer === 'Controller') {
@@ -229,27 +299,47 @@ export class RulesEvaluator {
       this.evaluateDTO(parsed, addViolation);
     }
 
-    // 4. Repository Layer Checks
+    // 4. Policy Layer Checks
+    if (parsed.layer === 'Policy') {
+      this.evaluatePolicy(parsed, addViolation);
+    }
+
+    // 5. Repository Layer Checks
     if (parsed.layer === 'Repository') {
       this.evaluateRepository(parsed, addViolation);
     }
 
-    // 5. Action Layer Checks
+    // 6. Action Layer Checks
     if (parsed.layer === 'Action') {
       this.evaluateAction(parsed, addViolation);
     }
 
-    // 6. Service Layer Checks
+    // 7. Service Layer Checks
     if (parsed.layer === 'Service') {
       this.evaluateService(parsed, addViolation);
     }
 
-    // 7. Migration Layer Checks (Multi-Tenancy)
+    // 8. Migration Layer Checks (Multi-Tenancy)
     if (parsed.layer === 'Migration') {
       this.evaluateMigration(parsed, addViolation, config);
     }
 
-    // 8. Performance Checks (N+1 queries in loops)
+    // 9. Observer Layer Checks
+    if (parsed.layer === 'Observer') {
+      this.evaluateObserver(parsed, addViolation);
+    }
+
+    // 10. Job Layer Checks
+    if (parsed.layer === 'Job') {
+      this.evaluateJob(parsed, addViolation);
+    }
+
+    // 11. Notification Layer Checks
+    if (parsed.layer === 'Notification') {
+      this.evaluateNotification(parsed, addViolation);
+    }
+
+    // 12. Performance Checks (N+1 queries in loops)
     this.evaluatePerformance(parsed, addViolation);
 
     return violations;
@@ -274,6 +364,21 @@ export class RulesEvaluator {
   }
 
   /**
+   * Evaluate empty catch blocks (Swallowed exceptions)
+   */
+  static evaluateExceptions(parsed, addViolation) {
+    for (const ec of parsed.emptyCatches || []) {
+      addViolation(
+        'swallowed_exception_hazard',
+        ec.line,
+        ec.snippet,
+        `Empty catch block detected catching ${ec.exception}. Swallowing exceptions conceals system faults and breaks consistency.`,
+        'Log the error via Log::error() or rethrow a specific domain exception.'
+      );
+    }
+  }
+
+  /**
    * Controller layer rules
    */
   static evaluateController(parsed, addViolation) {
@@ -284,7 +389,7 @@ export class RulesEvaluator {
           'controller_direct_model',
           imp.line,
           imp.statement,
-          `Controller imports Model directly (${imp.className}). Must delegate to FormRequest -> DTO -> Action.`
+          `Controller imports Model directly (${imp.className}). Must delegate to FormRequest -> DTO -> Policy -> Action -> Repository.`
         );
       }
     }
@@ -331,7 +436,7 @@ export class RulesEvaluator {
       }
     }
 
-    // Check method sizes and authorization on state-changing methods
+    // Check method sizes, authorization on state-changing methods, and Resource response wrapping
     for (const method of parsed.methods) {
       if (method.linesCount > 35) {
         addViolation(
@@ -354,6 +459,23 @@ export class RulesEvaluator {
             `public function ${method.name}(${method.params})`,
             `State-changing controller method "${method.name}" has no explicit FormRequest or Policy authorization check.`,
             'Inject a dedicated FormRequest with authorization or invoke $this->authorize(...) / Gate::authorize(...).'
+          );
+        }
+      }
+
+      // Check controller_raw_model_response: returning raw models or collections directly
+      const body = method.bodyText || '';
+      const rawModelReturnMatch = body.match(/return\s+(?:response\(\)->json\s*\(\s*)?([A-Z][a-zA-Z0-9_]*::(?:all|get|paginate|find|findOrFail|first)\b|\$[a-zA-Z0-9_]+->(?:all|get|paginate)\b)/i);
+      if (rawModelReturnMatch) {
+        const returnedExpression = rawModelReturnMatch[0];
+        const isResourceWrapped = /new\s+[A-Z][a-zA-Z0-9_]*Resource\s*\(|[A-Z][a-zA-Z0-9_]*Resource::collection\s*\(/i.test(body);
+        if (!isResourceWrapped) {
+          addViolation(
+            'controller_raw_model_response',
+            method.startLine,
+            returnedExpression,
+            `Controller method ${method.name} returns raw Eloquent model data directly without transforming through an API Resource.`,
+            'Wrap output in an API Resource (e.g. new UserResource($user) or UserResource::collection($users)).'
           );
         }
       }
@@ -408,6 +530,26 @@ export class RulesEvaluator {
           lineNum,
           line,
           'DTO attempting persistence or database query. DTO must remain a pure data container.'
+        );
+      }
+    }
+  }
+
+  /**
+   * Policy layer rules
+   */
+  static evaluatePolicy(parsed, addViolation) {
+    for (let idx = 0; idx < parsed.lines.length; idx++) {
+      const line = parsed.lines[idx];
+      const lineNum = idx + 1;
+
+      if (/->(save|delete|update|create|saveOrFail|increment|decrement)\s*\(/i.test(line) || /\bDB::(table|insert|update|delete|statement)\b/i.test(line)) {
+        addViolation(
+          'policy_mutation_hazard',
+          lineNum,
+          line,
+          'Database mutation detected in Policy class. Policies must be pure authorization evaluators returning boolean.',
+          'Remove mutation from Policy. Policies should only inspect attributes or permissions.'
         );
       }
     }
@@ -490,6 +632,60 @@ export class RulesEvaluator {
         1,
         `Total Lines: ${parsed.totalLines}`,
         `Service class is too large (${parsed.totalLines} lines > 350 lines). Split into domain Action classes.`
+      );
+    }
+  }
+
+  /**
+   * Observer layer rules
+   */
+  static evaluateObserver(parsed, addViolation) {
+    for (const method of parsed.methods) {
+      const lifecycleMethods = ['saving', 'saved', 'updating', 'updated', 'creating', 'created', 'deleting', 'deleted'];
+      if (lifecycleMethods.includes(method.name.toLowerCase())) {
+        const body = method.bodyText || '';
+        const recursiveMatch = body.match(/\$[a-zA-Z0-9_]+->(save|update|touch)\s*\(/i);
+        if (recursiveMatch && !body.includes('saveQuietly') && !body.includes('updateQuietly')) {
+          addViolation(
+            'observer_recursion_hazard',
+            method.startLine,
+            recursiveMatch[0],
+            `Direct model mutation "${recursiveMatch[0]}" inside Observer hook "${method.name}" can trigger infinite recursion.`,
+            'Use saveQuietly() or updateQuietly() to prevent re-triggering lifecycle events recursively.'
+          );
+        }
+      }
+    }
+  }
+
+  /**
+   * Job layer rules
+   */
+  static evaluateJob(parsed, addViolation) {
+    const hasShouldQueue = parsed.implementsInterfaces.some(i => i.includes('ShouldQueue')) || parsed.sourceCode.includes('ShouldQueue');
+    if (!hasShouldQueue) {
+      addViolation(
+        'job_missing_should_queue',
+        1,
+        `class ${parsed.className}`,
+        `Job class ${parsed.className} does not implement ShouldQueue contract.`,
+        'Add "implements ShouldQueue" to execute asynchronously on queue workers.'
+      );
+    }
+  }
+
+  /**
+   * Notification layer rules
+   */
+  static evaluateNotification(parsed, addViolation) {
+    const hasShouldQueue = parsed.implementsInterfaces.some(i => i.includes('ShouldQueue')) || parsed.sourceCode.includes('ShouldQueue');
+    if (!hasShouldQueue) {
+      addViolation(
+        'notification_missing_should_queue',
+        1,
+        `class ${parsed.className}`,
+        `Notification class ${parsed.className} does not implement ShouldQueue contract.`,
+        'Add "implements ShouldQueue" to prevent external notification dispatch from blocking HTTP responses.'
       );
     }
   }

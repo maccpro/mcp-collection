@@ -1,24 +1,31 @@
-# Laravel Code Pattern MCP Server (v2.1.0)
+# Laravel Code Pattern MCP Server (v2.2.0)
 
 Professional, enterprise-grade Model Context Protocol (MCP) quality gate and **Dynamic Relational Architecture Engine** for **Google Antigravity**, **Claude Desktop**, and **Cursor**.
 
-Validates application code against the canonical Laravel architecture flow, enforces Dependency Inversion Principle (DIP), detects security risks (SQL injection, mass assignment, unauthorized mutations), audits multi-tenancy boundaries, and constructs directed dependency graphs without sending routine source code to an LLM:
+Validates application code against the canonical 10-Stage Request-Response Lifecycle and 8 Cross-Cutting Pillars, enforces Dependency Inversion Principle (DIP), detects security risks (SQL injection, mass assignment, unauthorized mutations), audits multi-tenancy boundaries, and constructs directed dependency graphs without sending routine source code to an LLM:
 
+### 🔄 Canonical 10-Stage Request Lifecycle
 ```text
-Controller -> FormRequest -> DTO -> Action -> optional Service -> RepositoryInterface -> Repository -> Eloquent Model -> Database
+Controller -> FormRequest -> DTO -> Policy/Authorization -> Action -> Repository Interface -> Repository -> Eloquent Model -> Resource/Transformer -> Response
+```
+
+### 🛡️ 8 Enterprise Cross-Cutting Pillars
+```text
+Transaction -> Event/Listener -> Job/Queue -> Notification -> Cache -> Audit Log -> Exception Handling -> Observer
 ```
 
 ---
 
 ## ⚡ Design Principles & Capabilities
 
+- **Canonical 10-Stage Request Lifecycle:** Full validation from HTTP ingress, form validation, DTO transformation, Policy authorization, Action domain logic, RepositoryInterface contract, Repository persistence, Eloquent Model scoping, Resource/Transformer serialization, through standardized Response formatting.
+- **8 Cross-Cutting Pillars:** Automatic detection and hazard auditing for Transactions (`DB::transaction`), Events & Listeners, async Jobs (`ShouldQueue`), external Notifications, bounded Caching (TTL & tags), Audit Logging, Exception Handling (no swallowed exceptions), and loop-free Observers (`saveQuietly`).
 - **Dynamic Relational Architecture:** Constructs in-memory directed graphs (`INJECTS`, `CALLS`, `IMPLEMENTS`, `EXTENDS`, `CROSS_MODULE`) to trace call flows and detect cycle dependencies.
 - **Dynamic Project Introspection:** Auto-detects project topology (Modular Monolith, Clean DDD, Standard Layered, Multi-Tenant SaaS) and dynamically merges custom `.laravel-pattern.json` overrides.
 - **Strict Quality Gate:** Blocking `CRITICAL` and `ERROR` findings; non-blocking `WARNING` and `INFO` findings.
 - **Multi-Tenancy Governance:** Strict separation between central and tenant migrations (`database/migrations/tenant/`) and prevention of unscoped tenant model queries.
 - **OWASP Security Compliance:** Detects unescaped variable concatenation in raw SQL expressions (`DB::raw`, `whereRaw`), unguarded mass assignments (`$request->all()`), and unauthorized controller state mutations.
-- **Dependency Inversion (DIP):** Mandates that Actions and Services depend on `RepositoryInterface` contracts rather than concrete persistence classes.
-- **Static/AST-first:** No LLM tokens consumed for routine pattern checks.
+- **Dependency Inversion (DIP):** Mandates that Actions depend on `RepositoryInterface` contracts rather than concrete persistence classes.
 - **Zero Dependencies:** Pure Node.js standard libraries (`readline`, `fs`, `child_process`).
 - **High-Fidelity MiMo Remediation Payloads:** Automatically generates structured scaffolding and prompt instructions for MiMo when violations occur.
 - **Environment Hot-Reloading:** Automatically reloads local `.env` settings upon modification without restarting the server.
@@ -100,34 +107,34 @@ Granular inspector for deep debugging, code reviews, and running optional extern
   - `enable_semantic_review` (boolean, optional): Run conditional AI semantic review on clean code.
 
 ### 3. `get_architecture_rules`
-Returns the project's canonical architecture contract, flow sequence, 20+ rule definitions, severities, and path conventions without scanning source code.
+Returns the project's canonical architecture contract, flow sequence, 28 rule definitions, severities, and path conventions without scanning source code.
 
-### 4. `analyze_project_architecture` (NEW)
+### 4. `analyze_project_architecture`
 Comprehensive project-wide architecture health inspection.
 - **Parameters:**
   - `workspace_path` (string, optional): Project root path.
   - `max_files` (number, optional, default: 300): Maximum files to scan.
 - **Returns:**
-  - Full layer distribution and relational graph metrics.
+  - Full layer distribution across all 18 layers and relational graph metrics.
   - Afferent / Efferent coupling and Instability indexes per component.
   - Multi-tenancy isolation compliance audit.
   - Interactive Mermaid architecture flowchart.
 
-### 5. `explain_rule_remediation` (NEW)
+### 5. `explain_rule_remediation`
 Interactive architectural remediation guide for Laravel Clean Architecture rules.
 - **Parameters:**
-  - `rule_id` (string, required): E.g. `controller_direct_model`, `sql_injection_raw_exposure`, `repository_missing_interface`.
+  - `rule_id` (string, required): E.g. `controller_direct_model`, `controller_raw_model_response`, `policy_mutation_hazard`, `swallowed_exception_hazard`, `observer_recursion_hazard`, `sql_injection_raw_exposure`.
 - **Returns:**
   - SOLID principle rationale.
   - Anti-Pattern code example (Before).
   - Canonical Refactored code example (After).
 
-### 6. `validate_layer_contract` (NEW)
-Validates whether a specific class adheres strictly to its layer contract (e.g. RepositoryInterface fulfillment for Repositories, single-purpose invokable contract for Actions, immutability for DTOs, authorization for Controllers).
+### 6. `validate_layer_contract`
+Validates whether a specific class adheres strictly to its layer contract (e.g. RepositoryInterface fulfillment for Repositories, single-purpose invokable contract for Actions, immutability for DTOs, authorization for Controllers, Resource response wrapping, loop-free Observers).
 
 ---
 
-## 📏 20+ Canonical Architecture Rules
+## 📏 28 Canonical Architecture Rules
 
 | Rule ID | Severity | Category | Canonical Requirement |
 | :--- | :---: | :---: | :--- |
@@ -135,11 +142,13 @@ Validates whether a specific class adheres strictly to its layer contract (e.g. 
 | `controller_direct_db` | `ERROR` | Flow | Controllers must never run raw SQL or use the `DB::` facade directly. |
 | `controller_business_logic` | `WARNING` | Flow | Controller methods must remain thin ($\le 35$ lines, HTTP request $\to$ response mapping only). |
 | `controller_unauthorized_mutation` | `ERROR` | Security | State-mutating controller methods (store, update, destroy) must enforce authorization via FormRequest or Policy checks. |
+| `controller_raw_model_response` | `ERROR` | Flow | Controllers must wrap API data in a `JsonResource` or `ResourceCollection`, never returning raw Eloquent models directly. |
 | `sql_injection_raw_exposure` | `CRITICAL` | Security | Unescaped variable concatenation or interpolation detected in raw SQL expressions (`DB::raw`, `whereRaw`). Parameterized bindings are mandatory. |
 | `mass_assignment_unguarded` | `WARNING` | Security | Unvalidated `$request->all()` passed directly to `Model::create()` or `update()`. |
 | `form_request_persistence` | `ERROR` | Flow | FormRequests must never execute database persistence (`save()`, `update()`, `delete()`). |
 | `form_request_business_logic` | `WARNING` | Flow | FormRequests must only contain validation rules and authorization checks. |
 | `dto_persistence` | `ERROR` | Flow | DTOs must be pure immutable value objects and never call the database. |
+| `policy_mutation_hazard` | `ERROR` | Flow | Policy classes must only evaluate authorization (returning boolean) and never execute database mutations. |
 | `repository_http_dependency` | `ERROR` | Flow | Repositories must never import or depend on `Illuminate\Http\Request` or HTTP cookies/sessions. |
 | `repository_business_logic` | `WARNING` | Flow | Repositories must handle only data retrieval and storage, not domain business logic. |
 | `repository_missing_interface` | `WARNING` | Relational | Repositories must implement a corresponding `RepositoryInterface` / Contract (Dependency Inversion Principle). |
@@ -147,10 +156,16 @@ Validates whether a specific class adheres strictly to its layer contract (e.g. 
 | `action_http_dependency` | `ERROR` | Flow | Actions must be decoupled from the HTTP transport layer and receive typed DTOs or primitives instead of Request. |
 | `service_too_large` | `WARNING` | Flow | Service classes should not exceed 350 lines; decompose into discrete Actions. |
 | `cross_module_internal_dependency` | `ERROR` | Relational | Modules must communicate via Contracts or Events, never importing another module's internal Models/Repositories. |
-| `tenant_migration_misplacement` | `ERROR` | MultiTenancy | Tenant-specific migrations must strictly reside in `database/migrations/tenant/`, not in the central migrations directory. |
-| `tenant_unscoped_query` | `ERROR` | MultiTenancy | Multi-tenant models must use `BelongsToTenant` trait or explicit tenant scoping to prevent cross-tenant data leaks. |
-| `n_plus_one_loop_query` | `WARNING` | Performance | Direct database queries or relationship calls detected inside loops (`foreach`/`while`). Use eager loading. |
 | `unbounded_transaction_boundary` | `WARNING` | Reliability | Multiple database mutations across models without enclosing `DB::transaction()`. |
+| `swallowed_exception_hazard` | `ERROR` | Reliability | Empty catch block detected (`catch (\Exception $e) {}`). Swallowing exceptions conceals system faults. |
+| `observer_recursion_hazard` | `ERROR` | Reliability | Direct model save(), update(), or touch() inside an Observer lifecycle hook triggers infinite recursive loops. Use `saveQuietly()`. |
+| `job_missing_should_queue` | `WARNING` | CrossCutting | Asynchronous queue jobs must explicitly implement `ShouldQueue`. |
+| `notification_missing_should_queue` | `WARNING` | CrossCutting | Notifications sending over mail or external channels should implement `ShouldQueue`. |
+| `cache_unbounded_ttl` | `WARNING` | CrossCutting | Caching mutable data without explicit TTL expiration or invalidation tags. |
+| `event_after_commit_missing` | `INFO` | CrossCutting | Transactional events should implement `ShouldHandleEventsAfterCommit`. |
+| `tenant_migration_misplacement` | `ERROR` | MultiTenancy | Tenant-specific migrations must strictly reside in `database/migrations/tenant/`, not in central migrations. |
+| `tenant_unscoped_query` | `ERROR` | MultiTenancy | Multi-tenant models must use `BelongsToTenant` trait or explicit tenant scoping. |
+| `n_plus_one_loop_query` | `WARNING` | Performance | Direct database queries or relationship calls detected inside loops (`foreach`/`while`). |
 | `circular_dependency_detected` | `ERROR` | Relational | Circular dependency detected between classes in the relational graph. |
 
 ---
@@ -166,16 +181,6 @@ flowchart TD
     E --> B
     D -- "PASS" --> F["Optional: Run PHPStan / Pint"]
     F --> G["Quality Gate Passed: Commit Code"]
-```
-
----
-
-## 🤖 Antigravity Automated Enforcement Rule
-
-To ensure Antigravity automatically and mandatorily enforces this quality gate on every coding task, bug fix, or refactor without manual prompts, the following rule is enforced in Antigravity's global rules (`AGENTS.md`):
-
-```markdown
-- **Auto Architecture Gate (Mandatory for Laravel)**: Always run `architecture_gate` from `laravel-code-pattern` on all modified Laravel files before Git commit. If `FAIL`, fix violations immediately and re-run. Never commit unless the gate returns `PASS`.
 ```
 
 ---

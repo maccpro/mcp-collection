@@ -28,7 +28,7 @@ let BASE_CONFIG = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 const TOOLS = [
   {
     name: 'architecture_gate',
-    description: 'Compact PASS/FAIL architecture quality gate for Antigravity & MiMo loops. Validates changed files against the canonical flow (Controller -> FormRequest -> DTO -> Action -> optional Service -> RepositoryInterface -> Repository -> Model -> Database) without calling an LLM. Automatically discovers modified and untracked Git files if files argument is omitted.',
+    description: 'Compact PASS/FAIL architecture quality gate for Antigravity & MiMo loops. Validates changed files against the canonical flow (Controller -> FormRequest -> DTO -> Policy -> Action -> RepositoryInterface -> Repository -> Model -> Resource -> Response) without calling an LLM. Automatically discovers modified and untracked Git files if files argument is omitted.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -570,6 +570,36 @@ async function handleToolCall(name, args) {
         rationale: 'High-level modules (Actions, Domain Services) should not depend on low-level persistence implementations. Both should depend on abstractions (Interfaces). This enables swapping storage engines, adding caching decorators, and clean in-memory test mocking.',
         anti_pattern_before: `class CreateInvoiceAction {\n    public function __construct(private InvoiceRepository $repository) {} // Concrete dependency!\n}`,
         canonical_after: `interface InvoiceRepositoryInterface {\n    public function create(InvoiceDTO $dto): Invoice;\n}\n\nclass CreateInvoiceAction {\n    public function __construct(private InvoiceRepositoryInterface $repository) {} // Contract abstraction!\n}`
+      },
+      controller_raw_model_response: {
+        solid_principle: 'Information Hiding & Contract Decoupling (API Resource Serialization)',
+        rationale: 'Controllers must never expose internal Eloquent models directly to clients. Returning raw models couples the public API schema tightly to internal database table columns, inadvertently exposes sensitive hidden attributes, and breaks API contract stability.',
+        anti_pattern_before: 'class UserController extends Controller {\n    public function index() {\n        return response()->json(User::all());\n    }\n}',
+        canonical_after: 'class UserController extends Controller {\n    public function index(): JsonResponse {\n        $users = ($this->listUsersAction)();\n        return response()->json(UserResource::collection($users));\n    }\n}'
+      },
+      policy_mutation_hazard: {
+        solid_principle: 'Command Query Separation (CQS) & Principle of Least Privilege',
+        rationale: 'Policies are pure access-control evaluation gates that must only inspect context and answer boolean questions (allow/deny). Executing database writes or state mutations inside Policy classes creates untraceable side-effects.',
+        anti_pattern_before: 'class InvoicePolicy {\n    public function update(User $user, Invoice $invoice): bool {\n        $invoice->update([\'last_checked\' => now()]);\n        return $user->id === $invoice->user_id;\n    }\n}',
+        canonical_after: 'class InvoicePolicy {\n    public function update(User $user, Invoice $invoice): bool {\n        return $user->id === $invoice->user_id;\n    }\n}'
+      },
+      swallowed_exception_hazard: {
+        solid_principle: 'Fail-Fast Principle & Error Transparency',
+        rationale: 'Empty catch blocks silently swallow runtime errors and database transaction failures, concealing bugs and causing silent data corruption.',
+        anti_pattern_before: 'try {\n    $this->repository->create($dto);\n} catch (\\Exception $e) {\n    // Swallowed silently!\n}',
+        canonical_after: 'try {\n    $this->repository->create($dto);\n} catch (\\Throwable $e) {\n    Log::error(\'Failed: \' . $e->getMessage());\n    throw $e;\n}'
+      },
+      observer_recursion_hazard: {
+        solid_principle: 'Event-Driven Invariant & Loop-Free Lifecycle Hooks',
+        rationale: 'Invoking $model->save() or $model->update() inside an Eloquent Observer hook like saving() or saved() fires the same lifecycle events recursively, leading to infinite loops and stack exhaustion.',
+        anti_pattern_before: 'class UserObserver {\n    public function saved(User $user): void {\n        $user->last_login = now();\n        $user->save();\n    }\n}',
+        canonical_after: 'class UserObserver {\n    public function saved(User $user): void {\n        $user->last_login = now();\n        $user->saveQuietly();\n    }\n}'
+      },
+      job_missing_should_queue: {
+        solid_principle: 'Non-Blocking Asynchronous Processing',
+        rationale: 'Queue worker jobs and heavy external notifications must implement ShouldQueue to ensure execution is dispatched to background workers rather than executing synchronously in the HTTP request thread.',
+        anti_pattern_before: 'class ProcessInvoicePayment {\n    public function handle() { /* sync execution */ }\n}',
+        canonical_after: 'class ProcessInvoicePayment implements ShouldQueue {\n    use Queueable, SerializesModels;\n    public function handle() { /* background worker */ }\n}'
       },
       controller_unauthorized_mutation: {
         solid_principle: 'Principle of Least Privilege & Broken Object Level Authorization (BOLA/IDOR Prevention)',

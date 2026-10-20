@@ -406,5 +406,177 @@ assert.strictEqual(reportWithWarnings.mimo_remediation_payload.violations_count,
 assert.ok(reportWithWarnings.mimo_remediation_payload.prompt_for_mimo.includes('controller_business_logic'));
 console.log('✅ Test 14 Passed: Dynamic warning remediation payload generation verified.');
 
-console.log('\n🎉 ALL 14 COMPREHENSIVE ENTERPRISE QUALITY GATE TESTS PASSED! 🎉\n');
+// ---------------------------------------------------------
+// Test 15: Full 18 Architectural Layers Detection
+// ---------------------------------------------------------
+const eventCode = `<?php namespace App\\Events; class OrderCreated {}`;
+const listenerCode = `<?php namespace App\\Listeners; class SendOrderNotification {}`;
+const jobCode = `<?php namespace App\\Jobs; use Illuminate\\Contracts\\Queue\\ShouldQueue; class ProcessInvoiceJob implements ShouldQueue {}`;
+const notificationCode = `<?php namespace App\\Notifications; use Illuminate\\Notifications\\Notification; class InvoicePaidNotification extends Notification {}`;
+const observerCode = `<?php namespace App\\Observers; class OrderObserver {}`;
+const exceptionCode = `<?php namespace App\\Exceptions; use Exception; class PaymentFailedException extends Exception {}`;
+const responseCode = `<?php namespace App\\Http\\Responses; use Illuminate\\Http\\JsonResponse; class ApiResponse extends JsonResponse {}`;
+
+assert.strictEqual(StaticAnalyzer.parse('app/Events/OrderCreated.php', eventCode).layer, 'Event');
+assert.strictEqual(StaticAnalyzer.parse('app/Listeners/SendOrderNotification.php', listenerCode).layer, 'Listener');
+assert.strictEqual(StaticAnalyzer.parse('app/Jobs/ProcessInvoiceJob.php', jobCode).layer, 'Job');
+assert.strictEqual(StaticAnalyzer.parse('app/Notifications/InvoicePaidNotification.php', notificationCode).layer, 'Notification');
+assert.strictEqual(StaticAnalyzer.parse('app/Observers/OrderObserver.php', observerCode).layer, 'Observer');
+assert.strictEqual(StaticAnalyzer.parse('app/Exceptions/PaymentFailedException.php', exceptionCode).layer, 'Exception');
+assert.strictEqual(StaticAnalyzer.parse('app/Http/Responses/ApiResponse.php', responseCode).layer, 'Response');
+console.log('✅ Test 15 Passed: All 18 Architectural Layers cleanly detected.');
+
+// ---------------------------------------------------------
+// Test 16: controller_raw_model_response Rule Enforcement
+// ---------------------------------------------------------
+const rawModelController = `<?php
+namespace App\\Http\\Controllers;
+use App\\Models\\User;
+class UserController {
+    public function index() {
+        return response()->json(User::all());
+    }
+}
+`;
+const parsedRawController = StaticAnalyzer.parse('app/Http/Controllers/UserController.php', rawModelController);
+const rawViolations = RulesEvaluator.evaluate(parsedRawController);
+assert.ok(rawViolations.some(v => v.rule === 'controller_raw_model_response'), 'Should detect controller_raw_model_response when returning raw Model::all()');
+
+const resourceController = `<?php
+namespace App\\Http\\Controllers;
+use App\\Http\\Resources\\UserResource;
+class UserController {
+    public function index() {
+        return response()->json(UserResource::collection($users));
+    }
+}
+`;
+const parsedResourceController = StaticAnalyzer.parse('app/Http/Controllers/UserController.php', resourceController);
+const resourceViolations = RulesEvaluator.evaluate(parsedResourceController);
+assert.ok(!resourceViolations.some(v => v.rule === 'controller_raw_model_response'), 'Should pass when wrapped in Resource');
+console.log('✅ Test 16 Passed: controller_raw_model_response rule verified.');
+
+// ---------------------------------------------------------
+// Test 17: policy_mutation_hazard Rule Enforcement
+// ---------------------------------------------------------
+const mutatingPolicy = `<?php
+namespace App\\Policies;
+use App\\Models\\User;
+class InvoicePolicy {
+    public function update(User $user, $invoice) {
+        $user->update(['role' => 'admin']);
+        return true;
+    }
+}
+`;
+const parsedMutatingPolicy = StaticAnalyzer.parse('app/Policies/InvoicePolicy.php', mutatingPolicy);
+const policyViolations = RulesEvaluator.evaluate(parsedMutatingPolicy);
+assert.ok(policyViolations.some(v => v.rule === 'policy_mutation_hazard'), 'Should flag DB mutation inside Policy class');
+console.log('✅ Test 17 Passed: policy_mutation_hazard rule verified.');
+
+// ---------------------------------------------------------
+// Test 18: swallowed_exception_hazard Rule Enforcement
+// ---------------------------------------------------------
+const swallowedCatchCode = `<?php
+namespace App\\Actions;
+class ProcessPaymentAction {
+    public function __invoke() {
+        try {
+            $this->repo->charge();
+        } catch (\\Exception $e) {
+        }
+    }
+}
+`;
+const parsedSwallowed = StaticAnalyzer.parse('app/Actions/ProcessPaymentAction.php', swallowedCatchCode);
+const swallowedViolations = RulesEvaluator.evaluate(parsedSwallowed);
+assert.ok(swallowedViolations.some(v => v.rule === 'swallowed_exception_hazard'), 'Should flag empty catch block');
+console.log('✅ Test 18 Passed: swallowed_exception_hazard rule verified.');
+
+// ---------------------------------------------------------
+// Test 19: observer_recursion_hazard Rule Enforcement
+// ---------------------------------------------------------
+const recursiveObserverCode = `<?php
+namespace App\\Observers;
+class UserObserver {
+    public function saved($user) {
+        $user->last_seen = now();
+        $user->save();
+    }
+}
+`;
+const parsedRecursiveObserver = StaticAnalyzer.parse('app/Observers/UserObserver.php', recursiveObserverCode);
+const observerViolations = RulesEvaluator.evaluate(parsedRecursiveObserver);
+assert.ok(observerViolations.some(v => v.rule === 'observer_recursion_hazard'), 'Should flag recursive save() inside Observer saved()');
+
+const safeObserverCode = `<?php
+namespace App\\Observers;
+class UserObserver {
+    public function saved($user) {
+        $user->last_seen = now();
+        $user->saveQuietly();
+    }
+}
+`;
+const parsedSafeObserver = StaticAnalyzer.parse('app/Observers/UserObserver.php', safeObserverCode);
+const safeObserverViolations = RulesEvaluator.evaluate(parsedSafeObserver);
+assert.ok(!safeObserverViolations.some(v => v.rule === 'observer_recursion_hazard'), 'Should pass when saveQuietly() is used');
+console.log('✅ Test 19 Passed: observer_recursion_hazard rule verified.');
+
+// ---------------------------------------------------------
+// Test 20: job_missing_should_queue Rule Enforcement
+// ---------------------------------------------------------
+const syncJobCode = `<?php
+namespace App\\Jobs;
+class ExportInvoicesJob {
+    public function handle() {}
+}
+`;
+const parsedSyncJob = StaticAnalyzer.parse('app/Jobs/ExportInvoicesJob.php', syncJobCode);
+const syncJobViolations = RulesEvaluator.evaluate(parsedSyncJob);
+assert.ok(syncJobViolations.some(v => v.rule === 'job_missing_should_queue'), 'Should flag missing ShouldQueue in Job');
+console.log('✅ Test 20 Passed: job_missing_should_queue rule verified.');
+
+// ---------------------------------------------------------
+// Test 21: notification_missing_should_queue Rule Enforcement
+// ---------------------------------------------------------
+const syncNotificationCode = `<?php
+namespace App\\Notifications;
+use Illuminate\\Notifications\\Notification;
+class InvoiceOverdueNotification extends Notification {
+    public function via() { return ['mail']; }
+}
+`;
+const parsedSyncNotification = StaticAnalyzer.parse('app/Notifications/InvoiceOverdueNotification.php', syncNotificationCode);
+const syncNotificationViolations = RulesEvaluator.evaluate(parsedSyncNotification);
+assert.ok(syncNotificationViolations.some(v => v.rule === 'notification_missing_should_queue'), 'Should flag missing ShouldQueue in Notification');
+console.log('✅ Test 21 Passed: notification_missing_should_queue rule verified.');
+
+// ---------------------------------------------------------
+// Test 22: Complete 10-Stage Canonical Flow & Mermaid Graph
+// ---------------------------------------------------------
+const f1 = StaticAnalyzer.parse('app/Http/Controllers/OrderController.php', '<?php namespace App\\Http\\Controllers; class OrderController { public function __construct(private CreateOrderAction $action) {} }');
+const f2 = StaticAnalyzer.parse('app/Http/Requests/CreateOrderRequest.php', '<?php namespace App\\Http\\Requests; class CreateOrderRequest extends FormRequest {}');
+const f3 = StaticAnalyzer.parse('app/DTOs/OrderDTO.php', '<?php namespace App\\DTOs; readonly class OrderDTO {}');
+const f4 = StaticAnalyzer.parse('app/Policies/OrderPolicy.php', '<?php namespace App\\Policies; class OrderPolicy {}');
+const f5 = StaticAnalyzer.parse('app/Actions/CreateOrderAction.php', '<?php namespace App\\Actions; class CreateOrderAction { public function __construct(private OrderRepositoryInterface $repo) {} }');
+const f6 = StaticAnalyzer.parse('app/Repositories/OrderRepositoryInterface.php', '<?php namespace App\\Repositories; interface OrderRepositoryInterface {}');
+const f7 = StaticAnalyzer.parse('app/Repositories/OrderRepository.php', '<?php namespace App\\Repositories; class OrderRepository implements OrderRepositoryInterface {}');
+const f8 = StaticAnalyzer.parse('app/Models/Order.php', '<?php namespace App\\Models; class Order extends Model {}');
+const f9 = StaticAnalyzer.parse('app/Http/Resources/OrderResource.php', '<?php namespace App\\Http\\Resources; class OrderResource extends JsonResource {}');
+const f10 = StaticAnalyzer.parse('app/Http/Responses/OrderResponse.php', '<?php namespace App\\Http\\Responses; class OrderResponse extends JsonResponse {}');
+
+const fullFlowGraph = RelationalArchitectureEngine.buildGraph([f1, f2, f3, f4, f5, f6, f7, f8, f9, f10]);
+assert.strictEqual(fullFlowGraph.nodes.size, 10);
+const fullFlowViolations = RelationalArchitectureEngine.validateRelationalRules(fullFlowGraph);
+assert.strictEqual(fullFlowViolations.length, 0, 'Canonical 10-stage flow must have 0 relational violations');
+
+const mermaidOutput = RelationalArchitectureEngine.generateMermaidDiagram(fullFlowGraph);
+assert.ok(mermaidOutput.includes('Sub_Controller'));
+assert.ok(mermaidOutput.includes('Sub_Action'));
+assert.ok(mermaidOutput.includes('Sub_RepositoryInterface'));
+assert.ok(mermaidOutput.includes('Sub_Resource'));
+console.log('✅ Test 22 Passed: Complete 10-Stage Canonical Flow & Mermaid Graph validated with zero violations.');
+
+console.log('\n🎉 ALL 22 COMPREHENSIVE ENTERPRISE QUALITY GATE TESTS PASSED! 🎉\n');
 

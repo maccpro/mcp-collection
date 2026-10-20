@@ -98,7 +98,7 @@ export class Reporter {
         layer: v.layer,
         snippet: v.snippet,
         message: v.message,
-        suggested_fix: v.fix
+        fix: v.fix
       })),
       mimo_remediation_payload: mimoRemediationPayload
     };
@@ -156,15 +156,12 @@ export class Reporter {
     }
 
     if (status === 'PASS') {
-      md += `> [!NOTE]\n> All analyzed files strictly adhere to the Canonical Architecture Flow:\n> \`Controller -> FormRequest -> DTO -> Action -> optional Service -> RepositoryInterface -> Repository -> Model -> Database\`\n`;
+      md += `> [!NOTE]\n> All analyzed files strictly adhere to the Canonical 10-Stage Request Lifecycle:\n> \`Controller -> FormRequest -> DTO -> Policy -> Action -> RepositoryInterface -> Repository -> Model -> Resource -> Response\`\n`;
     }
 
     return md;
   }
 
-  /**
-   * Build ready-to-dispatch high-fidelity prompt for MiMo
-   */
   /**
    * Build ready-to-dispatch high-fidelity prompt for MiMo
    */
@@ -194,7 +191,8 @@ export class Reporter {
     const isBlocking = blockingViolations.length > 0;
     let prompt = isBlocking ? `CRITICAL ARCHITECTURE GATE FAILURE:\n` : `ARCHITECTURE WARNING AUDIT:\n`;
     prompt += `The analyzed code exhibits architectural deviations from the canonical flow:\n`;
-    prompt += `Canonical Flow: Controller -> FormRequest -> DTO -> Action -> Service (optional) -> RepositoryInterface -> Repository -> Model -> Database.\n\n`;
+    prompt += `Canonical 10-Stage Flow: Controller -> FormRequest -> DTO -> Policy -> Action -> RepositoryInterface -> Repository -> Model -> Resource -> Response.\n`;
+    prompt += `Cross-Cutting Concerns: Transaction, Event, Listener, Job, Notification, Cache, AuditLog, ExceptionHandling, Observer.\n\n`;
     prompt += `Please strictly refactor the following detected violations:\n\n`;
 
     targetViolations.forEach((v, idx) => {
@@ -210,16 +208,17 @@ export class Reporter {
     prompt += `INSTRUCTIONS & ARCHITECTURAL SCAFFOLDING FOR MIMO:\n`;
     prompt += `1. Controller Refactoring:\n`;
     prompt += `   - Remove direct Model queries and raw DB queries from Controller.\n`;
-    prompt += `   - Controller must only: (a) validate input via FormRequest, (b) instantiate DTO, (c) call Action, (d) return response/resource.\n`;
+    prompt += `   - Controller must only: (a) validate input via FormRequest, (b) instantiate DTO, (c) call Action, (d) wrap model in JsonResource and return Response.\n`;
     prompt += `2. Action & DTO Scaffolding:\n`;
     prompt += `   - Create single-purpose Action class with public function __invoke(SomeDTO $dto).\n`;
     prompt += `   - Action must inject RepositoryInterface (NOT concrete repository or HTTP request).\n`;
-    prompt += `3. Security & SQL Injection Remediation:\n`;
-    prompt += `   - For raw SQL (DB::raw, whereRaw), ALWAYS use query bindings: DB::raw("... ?", [$var]).\n`;
-    prompt += `   - Never pass raw $request->all() to Model::create() or update(); use $request->validated() or DTO.\n`;
-    prompt += `4. Module Isolation & Multi-Tenancy:\n`;
-    prompt += `   - Do NOT bypass module boundaries by importing another module's internal classes.\n`;
-    prompt += `   - Keep tenant migrations inside database/migrations/tenant/.\n`;
+    prompt += `3. Policy & Authorization:\n`;
+    prompt += `   - Policies must only return boolean; never mutate database inside Policy.\n`;
+    prompt += `4. Reliability & Exception Handling:\n`;
+    prompt += `   - Never leave catch blocks empty; log with Log::error() or throw domain exception.\n`;
+    prompt += `5. Observers & Queues:\n`;
+    prompt += `   - In Observers, use saveQuietly() to prevent infinite recursive loops.\n`;
+    prompt += `   - Asynchronous Jobs and external Notifications must implement ShouldQueue.\n`;
     prompt += `Output only the corrected, production-ready code for the affected classes.\n`;
 
     return {

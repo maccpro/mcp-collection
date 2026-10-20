@@ -4,8 +4,9 @@
  * 
  * Provides:
  * - In-memory Directed Relational Graph (Nodes & Edges)
- * - Canonical Architecture Flow Validation:
- *   Controller -> FormRequest -> DTO -> Action -> optional Service -> RepositoryInterface -> Repository -> Model -> Database
+ * - Canonical 10-Stage Architecture Flow Validation:
+ *   Controller -> FormRequest -> DTO -> Policy -> Action -> RepositoryInterface -> Repository -> Model -> Resource -> Response
+ * - 8 Cross-Cutting Pillars Integration
  * - Dependency Inversion Principle (DIP) Enforcement (RepositoryInterface vs concrete Repository)
  * - Cycle / Circular Dependency Detection via DFS
  * - Afferent / Efferent Coupling & Instability Metrics
@@ -18,13 +19,13 @@ export class RelationalNode {
   /**
    * @param {object} params
    * @param {string} params.id Unique node identifier (FQN or path)
-   * @param {string} params.type Node type: 'Controller' | 'FormRequest' | 'DTO' | 'Action' | 'Service' | 'RepositoryInterface' | 'Repository' | 'Model' | 'Policy' | 'Resource' | 'Other'
+   * @param {string} params.type Node type
    * @param {string} params.layer Architectural layer
    * @param {string|null} [params.module] Module name if modular
    * @param {string} [params.path] Source file path
    * @param {string} [params.className] Class name
    * @param {string} [params.namespace] Namespace
-   * @param {object} [params.metadata] Additional metadata (injections, methods, isTenant)
+   * @param {object} [params.metadata] Additional metadata
    */
   constructor({ id, type, layer, module = null, path = '', className = '', namespace = '', metadata = {} }) {
     this.id = id;
@@ -206,7 +207,7 @@ export class RelationalArchitectureEngine {
 
   /**
    * Validate Canonical Architecture Flow on the graph
-   * Flow: Controller -> FormRequest -> DTO -> Action -> (Service) -> RepositoryInterface -> Repository -> Model -> Database
+   * Flow: Controller -> FormRequest -> DTO -> Policy -> Action -> RepositoryInterface -> Repository -> Model -> Resource -> Response
    * 
    * @param {RelationalArchitectureGraph} graph 
    * @param {object} config 
@@ -253,7 +254,7 @@ export class RelationalArchitectureEngine {
               layer: 'Controller',
               snippet: `${edge.type}: ${edge.target}`,
               message: `Controller directly depends on Eloquent Model (${edge.target}). Controllers must not interact directly with Models.`,
-              fix: 'Delegate to FormRequest -> DTO -> Action -> Repository.'
+              fix: 'Delegate to FormRequest -> DTO -> Policy -> Action -> Repository.'
             });
           }
         }
@@ -337,13 +338,20 @@ export class RelationalArchitectureEngine {
     if (id.includes('controller')) return 'Controller';
     if (id.includes('request')) return 'FormRequest';
     if (id.includes('dto') || id.includes('data')) return 'DTO';
+    if (id.includes('policy')) return 'Policy';
     if (id.includes('action')) return 'Action';
     if (id.includes('service')) return 'Service';
     if (id.includes('interface') || id.includes('contract')) return 'RepositoryInterface';
     if (id.includes('repository') || id.includes('repo')) return 'Repository';
     if (id.includes('model') || id.includes('entity')) return 'Model';
-    if (id.includes('policy')) return 'Policy';
     if (id.includes('resource')) return 'Resource';
+    if (id.includes('response')) return 'Response';
+    if (id.includes('event')) return 'Event';
+    if (id.includes('listener')) return 'Listener';
+    if (id.includes('job')) return 'Job';
+    if (id.includes('notification')) return 'Notification';
+    if (id.includes('observer')) return 'Observer';
+    if (id.includes('exception')) return 'Exception';
     return 'Other';
   }
 
@@ -429,7 +437,7 @@ export class RelationalArchitectureEngine {
     const cleanId = (id) => id.replace(/[^a-zA-Z0-9_]/g, '_');
 
     let mm = '```mermaid\nflowchart TD\n';
-    mm += '    %% Canonical Architecture Flow Graph\n';
+    mm += '    %% Canonical 10-Stage Flow & Cross-Cutting Architecture Graph\n';
 
     // Group by layer subgraphs
     const layers = {};
