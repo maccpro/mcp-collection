@@ -1,6 +1,6 @@
 {
   "name": "@maccpro/database-mcp",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Enterprise Database Architecture, Reversible Migrations, SARGable Query Optimizer, PgBouncer Pooler & Hardware Tuner for MariaDB, MySQL, PostgreSQL & SQLite",
   "main": "server.js",
   "type": "module",

@@ -1,9 +1,9 @@
-# @maccpro/database-mcp
+# @maccpro/database-mcp (v1.2.1)
 
 > **Enterprise Database Architecture, Reversible Migrations, SARGable Query Optimizer, EXPLAIN Plan Diagnostics, Connection Pooler & Hardware Tuner for MariaDB, MySQL, PostgreSQL & SQLite**
 > 100% Offline, Deterministic, Zero-Token & Free.
 
-`database-mcp` is an enterprise Model Context Protocol (MCP) server engineered for production backend systems, multi-tenant SaaS applications, and high-performance database administration. It guarantees strict adherence to zero direct database modifications by outputting reversible Laravel migrations (`up()` & `down()`), analyzes queries for SARGability and composite B-Tree/GIN/HNSW indexes, diagnoses `EXPLAIN` execution plans (both text and JSON AST), detects zero-downtime lock hazards, calculates NVMe/RAM hardware tuning configurations with Linux OS sysctl parameters, generates disaster recovery runbooks, generates PgBouncer and ProxySQL connection pooling configs, provides GDPR data masking scripts, creates model factories & seeders, designs declarative table partitioning, and enforces a pre-commit database quality gate.
+`database-mcp` is an enterprise Model Context Protocol (MCP) server engineered for production backend systems, multi-tenant SaaS applications, and high-performance database administration. It guarantees strict adherence to zero direct database modifications by outputting reversible Laravel migrations (`up()` & `down()`), analyzes queries for SARGability and composite B-Tree/GIN/HNSW indexes, diagnoses `EXPLAIN` execution plans (both tabular text, MySQL 8.0+ tree format, and JSON AST), detects zero-downtime lock hazards (AccessExclusiveLock, table copies, unindexed foreign key scans), calculates NVMe/RAM hardware tuning configurations with Linux OS sysctl parameters, generates disaster recovery runbooks with SQLite zero-downtime hot backups (`VACUUM INTO`), generates PgBouncer and ProxySQL connection pooling configs, provides GDPR data masking scripts, creates type-safe model factories & seeders with relational bindings, designs declarative table partitioning, and enforces a pre-commit database quality gate.
 
 ---
 

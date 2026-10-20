@@ -110,13 +110,15 @@ export class QualityGate {
       }
 
       // 3. Check for raw unindexed locks or non-concurrent index in Postgres statement
-      if (/DB::statement\s*\(\s*['"]CREATE\s+INDEX\b/i.test(content) && !/CONCURRENTLY/i.test(content)) {
-        violations.push({
-          file: relPath,
-          severity: 'HIGH',
-          rule: 'LOCK_HAZARD_NON_CONCURRENT_INDEX',
-          message: 'Raw CREATE INDEX statement detected without CONCURRENTLY. In PostgreSQL, this locks the table against writes.'
-        });
+      if (/\b(?:pgsql|postgres|postgresql)\b/i.test(content) || !/\b(?:mysql|mariadb|sqlite)\b/i.test(content)) {
+        if (/DB::statement\s*\(\s*['"]CREATE\s+INDEX\b/i.test(content) && !/CONCURRENTLY/i.test(content)) {
+          violations.push({
+            file: relPath,
+            severity: 'HIGH',
+            rule: 'LOCK_HAZARD_NON_CONCURRENT_INDEX',
+            message: 'Raw CREATE INDEX statement detected without CONCURRENTLY. In PostgreSQL, this locks the table against writes.'
+          });
+        }
       }
 
       // 4. Check for CONCURRENTLY inside transaction block
@@ -131,6 +133,7 @@ export class QualityGate {
 
       // 5. Check for un-scoped unique constraints in multi-tenant migrations
       if (isTenantMigration) {
+        // A. Explicit $table->unique(['email']) or $table->unique('email')
         const singleUniqueMatches = [...content.matchAll(/\$table->unique\s*\(\s*(?:\[([^\]]+)\]|'([^']+)')/gi)];
         for (const match of singleUniqueMatches) {
           const cols = match[1] || match[2];
@@ -140,6 +143,20 @@ export class QualityGate {
               severity: 'HIGH',
               rule: 'TENANT_UNIQUE_NAMESPACE_LEAK',
               message: `Unique constraint '${cols}' in multi-tenant migration is not scoped by 'tenant_id'. This creates a global unique constraint causing cross-tenant namespace collisions.`
+            });
+          }
+        }
+
+        // B. Fluent $table->string('email')->unique()
+        const fluentUniqueMatches = [...content.matchAll(/\$table->[a-zA-Z0-9_]+\s*\(\s*['"]([a-zA-Z0-9_]+)['"][^;]*?->unique\s*\(\s*\)/gi)];
+        for (const match of fluentUniqueMatches) {
+          const colName = match[1];
+          if (colName && colName !== 'tenant_id') {
+            violations.push({
+              file: relPath,
+              severity: 'HIGH',
+              rule: 'TENANT_UNIQUE_NAMESPACE_LEAK',
+              message: `Fluent unique column '${colName}' in multi-tenant migration is not scoped by 'tenant_id'. Replace with composite unique index: $table->unique(['tenant_id', '${colName}']).`
             });
           }
         }

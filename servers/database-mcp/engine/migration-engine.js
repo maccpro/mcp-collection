@@ -24,6 +24,7 @@ export class MigrationEngine {
     const dialect = DialectManager.normalize(params.database_type || params.dialect || 'mariadb');
     const scope = (params.scope || 'standard').toLowerCase().trim();
     const isTenant = scope === 'tenant' || params.is_tenant === true || params.include_tenant_id === true;
+    const shouldIncludeTenantId = params.include_tenant_id === true || params.is_tenant === true || (scope === 'tenant' && params.include_tenant_id !== false);
     const pkType = params.primary_key || params.primary_key_type || 'id';
 
     const columns = params.columns || [];
@@ -65,7 +66,7 @@ export class MigrationEngine {
         }
 
         // Tenant ID if tenant table in single-database tenancy
-        if (params.include_tenant_id) {
+        if (shouldIncludeTenantId) {
           if (pkType === 'uuid') {
             lines.push(DialectManager.mapLaravelColumn('foreign_uuid', 'tenant_id', { index: true }, dialect));
           } else if (pkType === 'ulid') {
@@ -79,7 +80,7 @@ export class MigrationEngine {
         for (const col of columns) {
           const colOpts = { ...col };
           // If in multi-tenant discriminator scope and column is unique, scope it with tenant_id rather than global unique
-          if (params.include_tenant_id && colOpts.unique) {
+          if (shouldIncludeTenantId && colOpts.unique) {
             delete colOpts.unique;
             tenantScopedUniqueCols.push(col.name);
           }
@@ -95,7 +96,7 @@ export class MigrationEngine {
         for (const idx of indexes) {
           if (Array.isArray(idx.columns)) {
             let cols = idx.columns;
-            if (params.include_tenant_id && idx.type === 'unique' && !cols.includes('tenant_id')) {
+            if (shouldIncludeTenantId && idx.type === 'unique' && !cols.includes('tenant_id')) {
               cols = ['tenant_id', ...cols];
             }
             const colsStr = cols.map(c => `'${c}'`).join(', ');
@@ -271,10 +272,15 @@ export class MigrationEngine {
 
           if (isConcurrent && dialect === 'postgresql') {
             const rawIdxName = idx.name || `idx_${tableName}_${cols.join('_')}`;
-            indexLines.push(`DB::statement('CREATE INDEX CONCURRENTLY IF NOT EXISTS ${rawIdxName} ON ${tableName} (${cols.join(', ')});');`);
+            const whereClause = idx.where ? ` WHERE ${idx.where}` : '';
+            indexLines.push(`DB::statement('CREATE INDEX CONCURRENTLY IF NOT EXISTS ${rawIdxName} ON ${tableName} (${cols.join(', ')})${whereClause};');`);
             dropIndexLines.push(`DB::statement('DROP INDEX CONCURRENTLY IF EXISTS ${rawIdxName};');`);
           } else {
-            if (idx.type === 'unique') {
+            if (idx.where && dialect === 'postgresql') {
+              const rawIdxName = idx.name || `idx_${tableName}_${cols.join('_')}`;
+              indexLines.push(`DB::statement('CREATE INDEX IF NOT EXISTS ${rawIdxName} ON ${tableName} (${cols.join(', ')}) WHERE ${idx.where};');`);
+              dropIndexLines.push(`DB::statement('DROP INDEX IF EXISTS ${rawIdxName};');`);
+            } else if (idx.type === 'unique') {
               indexLines.push(indexName ? `$table->unique([${colsStr}], ${indexName});` : `$table->unique([${colsStr}]);`);
               dropIndexLines.push(indexName ? `$table->dropUnique(${indexName});` : `$table->dropUnique([${colsStr}]);`);
             } else if (idx.type === 'spatial') {
@@ -304,23 +310,39 @@ export class MigrationEngine {
         description = `Drop indexes from '${tableName}'`;
         const dropIndexLines = [];
         const restoreIndexLines = [];
+        const isConcurrent = params.concurrent === true || (dialect === 'postgresql' && indexes.some(i => i.concurrent === true));
+
+        if (isConcurrent && dialect === 'postgresql') {
+          requiresNoTransaction = true;
+        }
 
         for (const idx of indexes) {
           const cols = Array.isArray(idx.columns) ? idx.columns : [idx.columns];
           const colsStr = cols.map(c => `'${c}'`).join(', ');
           const indexName = idx.name ? `'${idx.name}'` : null;
+          const rawIdxName = idx.name || `idx_${tableName}_${cols.join('_')}`;
 
-          if (idx.type === 'unique') {
-            dropIndexLines.push(indexName ? `$table->dropUnique(${indexName});` : `$table->dropUnique([${colsStr}]);`);
-            restoreIndexLines.push(indexName ? `$table->unique([${colsStr}], ${indexName});` : `$table->unique([${colsStr}]);`);
+          if (isConcurrent && dialect === 'postgresql') {
+            dropIndexLines.push(`DB::statement('DROP INDEX CONCURRENTLY IF EXISTS ${rawIdxName};');`);
+            restoreIndexLines.push(`DB::statement('CREATE INDEX CONCURRENTLY IF NOT EXISTS ${rawIdxName} ON ${tableName} (${cols.join(', ')});');`);
           } else {
-            dropIndexLines.push(indexName ? `$table->dropIndex(${indexName});` : `$table->dropIndex([${colsStr}]);`);
-            restoreIndexLines.push(indexName ? `$table->index([${colsStr}], ${indexName});` : `$table->index([${colsStr}]);`);
+            if (idx.type === 'unique') {
+              dropIndexLines.push(indexName ? `$table->dropUnique(${indexName});` : `$table->dropUnique([${colsStr}]);`);
+              restoreIndexLines.push(indexName ? `$table->unique([${colsStr}], ${indexName});` : `$table->unique([${colsStr}]);`);
+            } else {
+              dropIndexLines.push(indexName ? `$table->dropIndex(${indexName});` : `$table->dropIndex([${colsStr}]);`);
+              restoreIndexLines.push(indexName ? `$table->index([${colsStr}], ${indexName});` : `$table->index([${colsStr}]);`);
+            }
           }
         }
 
-        upBody = `        Schema::table('${tableName}', function (Blueprint $table) {\n${dropIndexLines.map(l => `            ${l}`).join('\n')}\n        });`;
-        downBody = `        Schema::table('${tableName}', function (Blueprint $table) {\n${restoreIndexLines.map(l => `            ${l}`).join('\n')}\n        });`;
+        if (isConcurrent && dialect === 'postgresql') {
+          upBody = `        ${dropIndexLines.join('\n        ')}`;
+          downBody = `        ${restoreIndexLines.join('\n        ')}`;
+        } else {
+          upBody = `        Schema::table('${tableName}', function (Blueprint $table) {\n${dropIndexLines.map(l => `            ${l}`).join('\n')}\n        });`;
+          downBody = `        Schema::table('${tableName}', function (Blueprint $table) {\n${restoreIndexLines.map(l => `            ${l}`).join('\n')}\n        });`;
+        }
         break;
       }
 

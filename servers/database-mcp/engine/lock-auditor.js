@@ -118,8 +118,8 @@ class LockAuditor {
 
         case 'add_index': {
           if (normalizedDialect === 'postgresql') {
-            const hasConcurrent = op.concurrent !== false;
-            if (!hasConcurrent) {
+            const isConcurrent = op.concurrent === true;
+            if (!isConcurrent) {
               hazards.push({
                 operation: `CREATE INDEX on ${colName}`,
                 risk_level: 'HIGH',
@@ -157,14 +157,14 @@ class LockAuditor {
 
         case 'drop_index': {
           if (normalizedDialect === 'postgresql') {
-            const hasConcurrent = op.concurrent !== false;
-            if (!hasConcurrent) {
+            const isConcurrent = op.concurrent === true;
+            if (!isConcurrent) {
               hazards.push({
                 operation: `DROP INDEX on ${colName}`,
                 risk_level: 'HIGH',
                 lock_type: 'AccessExclusiveLock',
                 description: 'Dropping index without CONCURRENTLY acquires AccessExclusiveLock, blocking concurrent reads and writes.',
-                mitigation: 'Use DROP INDEX CONCURRENTLY in PostgreSQL.'
+                mitigation: 'Use DROP INDEX CONCURRENTLY in PostgreSQL and set public bool $withinTransaction = false;.'
               });
               highestRisk = this._escalateRisk(highestRisk, 'HIGH');
             } else {
@@ -183,6 +183,68 @@ class LockAuditor {
               description: 'Online index removal.'
             });
           }
+          break;
+        }
+
+        case 'truncate_table': {
+          hazards.push({
+            operation: `TRUNCATE TABLE ${table}`,
+            risk_level: 'CRITICAL',
+            lock_type: normalizedDialect === 'postgresql' ? 'AccessExclusiveLock' : 'TABLE_LOCK',
+            description: `TRUNCATE acquires an immediate exclusive lock on '${table}', bypasses ON DELETE triggers, and destroys all table data irreversibly.`,
+            mitigation: 'For large tables, delete in batches via cursor/keyset seeking (e.g. DELETE FROM table WHERE id <= X LIMIT 5000) or swap with a newly created table.'
+          });
+          highestRisk = 'CRITICAL';
+          break;
+        }
+
+        case 'drop_table': {
+          hazards.push({
+            operation: `DROP TABLE ${table}`,
+            risk_level: 'CRITICAL',
+            lock_type: normalizedDialect === 'postgresql' ? 'AccessExclusiveLock' : 'EXCLUSIVE_METADATA_LOCK',
+            description: `Dropping table '${table}' immediately blocks dependent queries and invalidates foreign key constraints.`,
+            mitigation: 'Verify table is decommissioned, rename table to _deprecated first, monitor for 48 hours, then drop.'
+          });
+          highestRisk = 'CRITICAL';
+          break;
+        }
+
+        case 'add_primary_key':
+        case 'modify_primary_key': {
+          hazards.push({
+            operation: `PRIMARY KEY ALTERATION on ${table}`,
+            risk_level: 'CRITICAL',
+            lock_type: normalizedDialect === 'postgresql' ? 'AccessExclusiveLock (Full Table Rewrite)' : 'ALGORITHM=COPY (Full Clustered Index Rebuild)',
+            description: `Altering or adding a primary key in InnoDB forces a full clustered index rebuild and table copy, blocking all DML for the duration.`,
+            mitigation: 'Use pt-online-schema-change or gh-ost for zero-downtime primary key rebuilds on tables with >100k rows.'
+          });
+          highestRisk = 'CRITICAL';
+          break;
+        }
+
+        case 'unindexed_foreign_key': {
+          hazards.push({
+            operation: `UNINDEXED FOREIGN KEY on ${colName}`,
+            risk_level: 'HIGH',
+            lock_type: normalizedDialect === 'postgresql' ? 'ShareLock (Cascade Table Scan)' : 'METADATA_LOCK / TABLE_SCAN',
+            description: `Child foreign key column '${colName}' lacks an index. Deleting or updating rows in the parent table forces a sequential scan and table-wide lock on the child table.`,
+            mitigation: `Create an index on child table column '${colName}' immediately.`
+          });
+          highestRisk = this._escalateRisk(highestRisk, 'HIGH');
+          break;
+        }
+
+        case 'convert_charset':
+        case 'change_collation': {
+          hazards.push({
+            operation: `CONVERT CHARSET / COLLATION on ${table}`,
+            risk_level: 'CRITICAL',
+            lock_type: 'TABLE_REWRITE',
+            description: `Converting character set or collation rewrites all text columns and rebuilds every secondary index under an exclusive table lock.`,
+            mitigation: 'Perform online schema change using gh-ost or pt-online-schema-change.'
+          });
+          highestRisk = 'CRITICAL';
           break;
         }
 

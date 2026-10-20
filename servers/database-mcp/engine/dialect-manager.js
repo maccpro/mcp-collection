@@ -31,48 +31,34 @@ export class DialectManager {
       case 'id':
       case 'primary_key':
       case 'bigincrements':
-        return `$table->id(${colName});`;
+        method += name === 'id' ? `id(${colName})` : `id(${colName})`;
+        break;
 
       case 'uuid':
       case 'uuid_primary':
-        if (d === 'postgresql') {
-          // Native uuid in PostgreSQL with gen_random_uuid()
-          return options.primary 
-            ? `$table->uuid(${colName})->primary();` 
-            : `$table->uuid(${colName});`;
-        } else if (d === 'mariadb') {
-          // MariaDB 10.7+ has native uuid
-          return options.primary 
-            ? `$table->uuid(${colName})->primary();` 
-            : `$table->uuid(${colName});`;
-        } else if (d === 'sqlite') {
-          return options.primary
-            ? `$table->uuid(${colName})->primary();`
-            : `$table->uuid(${colName});`;
+        if (d === 'mysql' && options.binary) {
+          method += `binary(${colName}, 16)`;
         } else {
-          // MySQL 8+ best practice for B-Tree clustered index: binary(16) or uuid string
-          return options.binary 
-            ? `$table->binary(${colName}, 16); // Recommended for MySQL ordered UUID`
-            : (options.primary ? `$table->uuid(${colName})->primary();` : `$table->uuid(${colName});`);
+          method += `uuid(${colName})`;
         }
+        if (options.primary) method += '->primary()';
+        break;
 
       case 'ulid':
       case 'ulid_primary':
-        return options.primary
-          ? `$table->ulid(${colName})->primary();`
-          : `$table->ulid(${colName});`;
+        method += `ulid(${colName})`;
+        if (options.primary) method += '->primary()';
+        break;
 
       case 'foreign_uuid':
       case 'foreignuuid':
-        return options.nullable
-          ? `$table->foreignUuid(${colName})->nullable();`
-          : `$table->foreignUuid(${colName});`;
+        method += `foreignUuid(${colName})`;
+        break;
 
       case 'foreign_ulid':
       case 'foreignulid':
-        return options.nullable
-          ? `$table->foreignUlid(${colName})->nullable();`
-          : `$table->foreignUlid(${colName});`;
+        method += `foreignUlid(${colName})`;
+        break;
 
       case 'vector':
       case 'embedding': {
@@ -87,31 +73,52 @@ export class DialectManager {
 
       // Polymorphic Relations
       case 'morphs':
-        return `$table->morphs(${colName});`;
+        if (options.nullable) {
+          method += `nullableMorphs(${colName})`;
+        } else {
+          method += `morphs(${colName})`;
+        }
+        break;
 
       case 'nullablemorphs':
-        return `$table->nullableMorphs(${colName});`;
+        method += `nullableMorphs(${colName})`;
+        break;
 
       case 'uuidmorphs':
-        return `$table->uuidMorphs(${colName});`;
+        if (options.nullable) {
+          method += `nullableUuidMorphs(${colName})`;
+        } else {
+          method += `uuidMorphs(${colName})`;
+        }
+        break;
 
       case 'nullableuuidmorphs':
-        return `$table->nullableUuidMorphs(${colName});`;
+        method += `nullableUuidMorphs(${colName})`;
+        break;
 
       case 'ulidmorphs':
-        return `$table->ulidMorphs(${colName});`;
+        if (options.nullable) {
+          method += `nullableUlidMorphs(${colName})`;
+        } else {
+          method += `ulidMorphs(${colName})`;
+        }
+        break;
 
       case 'nullableulidmorphs':
-        return `$table->nullableUlidMorphs(${colName});`;
+        method += `nullableUlidMorphs(${colName})`;
+        break;
 
       case 'remembertoken':
-        return `$table->rememberToken();`;
+        method += 'rememberToken()';
+        break;
 
       case 'softdeletes':
-        return d === 'postgresql' ? `$table->softDeletesTz();` : `$table->softDeletes();`;
+        method += (d === 'postgresql' ? 'softDeletesTz' : 'softDeletes') + (name && name !== 'deleted_at' ? `(${colName})` : '()');
+        break;
 
       case 'timestamps':
-        return d === 'postgresql' ? `$table->timestampsTz();` : `$table->timestamps();`;
+        method += d === 'postgresql' ? 'timestampsTz()' : 'timestamps()';
+        break;
 
       case 'string':
       case 'varchar': {
@@ -165,14 +172,18 @@ export class DialectManager {
 
       case 'unsignedbigint':
       case 'unsignedbiginteger':
+        method += `unsignedBigInteger(${colName})`;
+        break;
+
       case 'foreign_id':
       case 'foreignid':
         if (options.pk_type === 'uuid') {
-          return options.nullable ? `$table->foreignUuid(${colName})->nullable();` : `$table->foreignUuid(${colName});`;
+          method += `foreignUuid(${colName})`;
         } else if (options.pk_type === 'ulid') {
-          return options.nullable ? `$table->foreignUlid(${colName})->nullable();` : `$table->foreignUlid(${colName});`;
+          method += `foreignUlid(${colName})`;
+        } else {
+          method += `unsignedBigInteger(${colName})`;
         }
-        method += `unsignedBigInteger(${colName})`;
         break;
 
       case 'float': {
@@ -329,7 +340,12 @@ export class DialectManager {
     if (options.stored_as) {
       method += `->storedAs('${options.stored_as}')`;
     } else if (options.virtual_as) {
-      method += `->virtualAs('${options.virtual_as}')`;
+      if (d === 'postgresql') {
+        // PostgreSQL does not support VIRTUAL generated columns; fallback to STORED
+        method += `->storedAs('${options.virtual_as}')`;
+      } else {
+        method += `->virtualAs('${options.virtual_as}')`;
+      }
     }
 
     if (options.comment) method += `->comment('${options.comment.replace(/'/g, "\\'")}')`;

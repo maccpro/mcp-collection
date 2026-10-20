@@ -27,6 +27,16 @@ export class PartitionAdvisor {
     const currentYear = new Date().getUTCFullYear();
     const currentMonth = new Date().getUTCMonth() + 1;
 
+    if (dialect === 'sqlite') {
+      return {
+        success: false,
+        dialect: 'sqlite',
+        table_name: tableName,
+        error: 'SQLite does not support native table partitioning. Use table sharding or archive tables with ATTACH DATABASE.',
+        recommended_alternative: `-- SQLite Sharding / Archival Pattern:\nCREATE TABLE ${tableName}_archive AS SELECT * FROM ${tableName} WHERE ${partitionColumn} < datetime('now', '-1 year');\nDELETE FROM ${tableName} WHERE ${partitionColumn} < datetime('now', '-1 year');\nVACUUM;`
+      };
+    }
+
     let upSql = '';
     let downSql = '';
     let partitionList = [];
@@ -70,7 +80,10 @@ CREATE TABLE ${tableName}_partitioned (
     } else {
       // MySQL / MariaDB Partitioning
       if (partitionType === 'range') {
-        upSql = `ALTER TABLE ${tableName} PARTITION BY RANGE (YEAR(${partitionColumn})) (\n`;
+        upSql = `-- Pre-requisite: In MySQL, the partitioning column MUST be included in the PRIMARY KEY and all UNIQUE indexes (to avoid Error 1503)
+-- Step 1 (If needed): ALTER TABLE ${tableName} DROP PRIMARY KEY, ADD PRIMARY KEY (id, ${partitionColumn});
+
+ALTER TABLE ${tableName} PARTITION BY RANGE (YEAR(${partitionColumn})) (\n`;
         const parts = [];
         for (let y = currentYear - 1; y <= currentYear + 3; y++) {
           parts.push(`    PARTITION p${y} VALUES LESS THAN (${y + 1})`);

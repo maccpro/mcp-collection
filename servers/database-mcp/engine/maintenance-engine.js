@@ -19,6 +19,8 @@ class MaintenanceEngine {
 
     if (normalizedDialect === 'postgresql' || normalizedDialect === 'postgres') {
       return this._getPostgresqlRunbook(task, table);
+    } else if (normalizedDialect === 'sqlite') {
+      return this._getSQLiteRunbook(task, table);
     } else {
       return this._getMySQLRunbook(normalizedDialect, task, table);
     }
@@ -46,6 +48,21 @@ class MaintenanceEngine {
           basebackup_command: `pg_basebackup -h 127.0.0.1 -U replicator -D /var/lib/postgresql/backup_$(date +%F) -Fp -Xs -P -R`,
           wal_archive_setting: `archive_mode = on\narchive_command = 'test ! -f /mnt/wal_archive/%f && cp %p /mnt/wal_archive/%f'`,
           pitr_recovery_target: `restore_command = 'cp /mnt/wal_archive/%f %p'\nrecovery_target_time = '2026-10-20 08:30:00 UTC'`
+        }
+      };
+    } else if (d === 'sqlite') {
+      return {
+        dialect: 'sqlite',
+        database: database_name,
+        online_backup_api: {
+          description: 'Zero-downtime hot snapshot using VACUUM INTO (SQLite 3.27+). Safe while concurrent transactions execute in WAL mode.',
+          vacuum_into_command: `sqlite3 ${database_name} "VACUUM INTO 'backup_${database_name}_$(date +%Y%m%d_%H%M%S).sqlite';"`,
+          cli_backup_command: `sqlite3 ${database_name} ".backup 'backup_${database_name}.sqlite'"`,
+          cron_daily_schedule: `0 2 * * * sqlite3 ${database_name} "VACUUM INTO '/backups/sqlite/daily_$(date +\\%F).sqlite';" && find /backups/sqlite/ -type f -mtime +7 -delete`
+        },
+        restore_procedure: {
+          description: 'Safe restore by swapping files when the application is idle or stopped.',
+          restore_command: `cp backup_${database_name}.sqlite ${database_name}`
         }
       };
     } else {
@@ -396,6 +413,59 @@ ORDER BY time DESC;`,
         description: 'Checks MySQL / MariaDB replica thread status, I/O thread, SQL thread, and replication lag.',
         diagnostic_sql: flavor === 'mysql' ? 'SHOW REPLICA STATUS\\G' : 'SHOW SLAVE STATUS\\G',
         remediation_action: 'Check Seconds_Behind_Source / Seconds_Behind_Master. If Replica_SQL_Running is No, investigate Last_SQL_Error.'
+      });
+    }
+
+    return runbook;
+  }
+
+  /**
+   * SQLite Diagnostic Runbook
+   */
+  static _getSQLiteRunbook(task, targetTable) {
+    const runbook = {
+      dialect: 'sqlite',
+      diagnostic_tasks: []
+    };
+
+    // 1. Integrity and Foreign Key Checks
+    if (task === 'all' || task === 'bloat' || task === 'fragmentation') {
+      runbook.diagnostic_tasks.push({
+        title: 'Database Integrity & Corruption Inspection',
+        description: 'Deeply scans SQLite B-Tree structures, free lists, and page headers for data corruption.',
+        diagnostic_sql: `PRAGMA integrity_check;\nPRAGMA foreign_key_check;`,
+        remediation_action: 'If integrity_check returns errors, rebuild database using .dump / .restore.'
+      });
+    }
+
+    // 2. Space Reclaim & Defragmentation (VACUUM)
+    if (task === 'all' || task === 'fragmentation' || task === 'bloat') {
+      runbook.diagnostic_tasks.push({
+        title: 'Freelist Pages & Database File Compaction',
+        description: 'Inspects unused freelist pages and executes incremental or full VACUUM to reclaim space.',
+        diagnostic_sql: `PRAGMA freelist_count;\nPRAGMA page_count;\nPRAGMA page_size;`,
+        remediation_sql: `VACUUM; -- Rebuilds database file into contiguous disk blocks`,
+        cli_command: `sqlite3 <database_name> "VACUUM;"`
+      });
+    }
+
+    // 3. Query Optimizer Statistics
+    if (task === 'all' || task === 'unused_indexes') {
+      runbook.diagnostic_tasks.push({
+        title: 'SQLite Query Planner Statistics',
+        description: 'Updates sqlite_stat1 to allow the cost-based query optimizer to pick the best indexes.',
+        diagnostic_sql: `PRAGMA optimize;\nANALYZE;`,
+        remediation_action: 'Run PRAGMA optimize before closing database connections or as part of scheduled daily maintenance.'
+      });
+    }
+
+    // 4. WAL Checkpoint
+    if (task === 'all' || task === 'connections') {
+      runbook.diagnostic_tasks.push({
+        title: 'WAL (Write-Ahead Log) Flush & Truncate',
+        description: 'Forces all uncommitted WAL pages to flush back to the main database file.',
+        diagnostic_sql: `PRAGMA wal_checkpoint(TRUNCATE);`,
+        remediation_action: 'Truncates the -wal file back to zero bytes.'
       });
     }
 

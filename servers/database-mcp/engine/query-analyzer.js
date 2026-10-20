@@ -340,7 +340,7 @@ class QueryAnalyzer {
       while ((eq = equalityRegex.exec(whereClause)) !== null) {
         const prefix = eq[1];
         const col = eq[2];
-        if (col && !['and', 'or', 'where', 'not', 'null'].includes(col.toLowerCase())) {
+        if (col && !['and', 'or', 'where', 'not', 'null'].includes(col.toLowerCase()) && !/^[0-9]+$/.test(col)) {
           const targetTbl = getTableForAlias(prefix);
           const tEsr = initTableEsr(targetTbl);
           tEsr.equality.push(col.toLowerCase());
@@ -356,7 +356,7 @@ class QueryAnalyzer {
       while ((rg = rangeRegex.exec(whereClause)) !== null) {
         const prefix = rg[1];
         const col = rg[2];
-        if (col && !['and', 'or', 'where', 'not'].includes(col.toLowerCase())) {
+        if (col && !['and', 'or', 'where', 'not'].includes(col.toLowerCase()) && !/^[0-9]+$/.test(col)) {
           const targetTbl = getTableForAlias(prefix);
           const tEsr = initTableEsr(targetTbl);
           if (!tEsr.equality.includes(col.toLowerCase())) {
@@ -381,7 +381,7 @@ class QueryAnalyzer {
         if (colMatch) {
           const prefix = colMatch[1];
           const col = colMatch[2];
-          if (col && !['and', 'or'].includes(col.toLowerCase())) {
+          if (col && !['and', 'or'].includes(col.toLowerCase()) && !/^[0-9]+$/.test(col)) {
             const targetTbl = getTableForAlias(prefix);
             const tEsr = initTableEsr(targetTbl);
             tEsr.sort.push(col.toLowerCase());
@@ -473,15 +473,27 @@ class QueryAnalyzer {
     };
   }
 
+  static _singularize(word) {
+    const w = String(word || '').toLowerCase();
+    if (w.endsWith('ies')) return w.slice(0, -3) + 'y';
+    if (w.endsWith('sses')) return w.slice(0, -2);
+    if (w.endsWith('ches') || w.endsWith('shes') || w.endsWith('xes')) return w.slice(0, -2);
+    if (['status', 'business', 'news', 'series'].includes(w)) return w;
+    if (w.endsWith('s') && !w.endsWith('ss')) return w.slice(0, -1);
+    return w;
+  }
+
   /**
    * Generate Eloquent Rewriter suggestions
    */
   static _generateEloquentRewriter(sql, table, esr) {
     const modelName = table
       .split('_')
-      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-      .join('')
-      .replace(/s$/, ''); // Basic singularization (users -> User)
+      .map(part => {
+        const s = this._singularize(part);
+        return s.charAt(0).toUpperCase() + s.slice(1);
+      })
+      .join('');
 
     const eqCols = Array.from(new Set(esr.equality));
     const rangeCols = Array.from(new Set(esr.range));
@@ -503,7 +515,7 @@ class QueryAnalyzer {
 
     // Check for JOIN in SQL to recommend eager loading
     const joinMatches = [...sql.matchAll(/\bJOIN\s+[`"']?([a-zA-Z0-9_]+)[`"']?/gi)];
-    const relations = joinMatches.map(m => m[1].replace(/s$/, ''));
+    const relations = joinMatches.map(m => this._singularize(m[1]));
 
     if (relations.length > 0) {
       const relArray = relations.map(r => `'${r}'`).join(', ');

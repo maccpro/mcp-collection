@@ -337,7 +337,7 @@ const TOOLS = [
       properties: {
         dialect: {
           type: 'string',
-          enum: ['mariadb', 'mysql', 'postgresql'],
+          enum: ['mariadb', 'mysql', 'postgresql', 'sqlite'],
           default: DEFAULT_DIALECT,
           description: 'Database system.'
         },
@@ -391,7 +391,7 @@ const TOOLS = [
         },
         dialect: {
           type: 'string',
-          enum: ['mariadb', 'mysql', 'postgresql'],
+          enum: ['mariadb', 'mysql', 'postgresql', 'sqlite'],
           default: DEFAULT_DIALECT,
           description: 'Target database system.'
         }
@@ -459,7 +459,7 @@ const TOOLS = [
       properties: {
         dialect: {
           type: 'string',
-          enum: ['mariadb', 'mysql', 'postgresql'],
+          enum: ['mariadb', 'mysql', 'postgresql', 'sqlite'],
           default: DEFAULT_DIALECT,
           description: 'Database dialect.'
         },
@@ -535,7 +535,7 @@ const TOOLS = [
         },
         dialect: {
           type: 'string',
-          enum: ['postgresql', 'mariadb', 'mysql'],
+          enum: ['postgresql', 'mariadb', 'mysql', 'sqlite'],
           default: 'postgresql',
           description: 'Target database engine.'
         },
@@ -694,6 +694,14 @@ rl.on('line', async (line) => {
   try {
     message = JSON.parse(trimmed);
   } catch (err) {
+    sendResponse({
+      jsonrpc: '2.0',
+      id: null,
+      error: {
+        code: -32700,
+        message: 'Parse error: invalid JSON'
+      }
+    });
     return;
   }
 
@@ -717,7 +725,7 @@ rl.on('line', async (line) => {
             },
             serverInfo: {
               name: 'database-mcp',
-              version: '1.2.0'
+              version: '1.2.1'
             }
           }
         });
@@ -792,7 +800,15 @@ rl.on('line', async (line) => {
         } else if (uri === 'db://templates/sqlite-tuning.sql') {
           textContent = ConfigTuner.tune({ ram_gb: 4, dialect: 'sqlite' }).config_file_content;
         } else {
-          textContent = `# Resource ${uri} not found`;
+          sendResponse({
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: -32602,
+              message: `Resource '${uri}' not found`
+            }
+          });
+          return;
         }
 
         sendResponse({
@@ -840,7 +856,7 @@ rl.on('line', async (line) => {
               ]
             }
           });
-        } else {
+        } else if (promptName === 'plan-zero-downtime-migration') {
           sendResponse({
             jsonrpc: '2.0',
             id,
@@ -855,6 +871,15 @@ rl.on('line', async (line) => {
                   }
                 }
               ]
+            }
+          });
+        } else {
+          sendResponse({
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: -32602,
+              message: `Prompt '${promptName}' not found`
             }
           });
         }

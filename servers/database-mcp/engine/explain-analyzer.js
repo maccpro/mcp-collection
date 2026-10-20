@@ -47,16 +47,17 @@ export class ExplainAnalyzer {
     if (normalizedDialect === 'postgresql' || normalizedDialect === 'postgres') {
       if (planObj) {
         this._analyzePostgresJsonAST(planObj, issues, recommendations, scanTypes, metrics);
+      } else {
+        this._analyzePostgresPlanText(planText, issues, recommendations, scanTypes);
       }
-      // Run text checks as fallback or complement
-      this._analyzePostgresPlanText(planText, issues, recommendations, scanTypes);
     } else if (normalizedDialect === 'sqlite') {
       this._analyzeSQLitePlanText(planText, issues, recommendations, scanTypes);
     } else {
       if (planObj) {
         this._analyzeMySQLJsonAST(planObj, issues, recommendations, scanTypes, metrics);
+      } else {
+        this._analyzeMySQLPlanText(planText, issues, recommendations, scanTypes);
       }
-      this._analyzeMySQLPlanText(planText, issues, recommendations, scanTypes);
     }
 
     // De-duplicate issues by type and target
@@ -360,7 +361,21 @@ export class ExplainAnalyzer {
    * Parse and analyze MariaDB / MySQL EXPLAIN text
    */
   static _analyzeMySQLPlanText(text, issues, recommendations, scanTypes) {
-    if (/\btype\b\s*:\s*ALL/i.test(text) || /\bALL\b/i.test(text) && /\brow/i.test(text)) {
+    // 1. Tabular or Tree Full Table Scan
+    const treeTableScanMatch = text.match(/->\s*Table scan on\s+([a-zA-Z0-9_]+)/i);
+    if (treeTableScanMatch) {
+      const tbl = treeTableScanMatch[1];
+      scanTypes.push(`Table scan (${tbl})`);
+      issues.push({
+        type: 'FULL_TABLE_SCAN',
+        severity: 'CRITICAL',
+        target: tbl,
+        description: `MySQL EXPLAIN ANALYZE detected a Table Scan on '${tbl}'. Engine is sequentially scanning all rows.`
+      });
+      recommendations.push({
+        action: `Create a composite B-Tree index on '${tbl}' covering filtered and sorted columns.`
+      });
+    } else if (/\btype\b\s*:\s*ALL/i.test(text) || (/\bALL\b/i.test(text) && /\brow/i.test(text))) {
       scanTypes.push('ALL (Full Table Scan)');
       issues.push({
         type: 'FULL_TABLE_SCAN',
@@ -372,27 +387,34 @@ export class ExplainAnalyzer {
       });
     }
 
+    // 2. Tree and Tabular Index Scans / Lookups
+    const treeLookupMatch = text.match(/->\s*Index lookup on\s+([a-zA-Z0-9_]+)\s+using\s+([a-zA-Z0-9_]+)/i);
+    if (treeLookupMatch) {
+      scanTypes.push(`Index lookup (${treeLookupMatch[1]} using ${treeLookupMatch[2]})`);
+    }
     if (/\btype\b\s*:\s*index/i.test(text)) scanTypes.push('index (Full Index Scan)');
     if (/\btype\b\s*:\s*range/i.test(text)) scanTypes.push('range (Index Range Scan)');
     if (/\btype\b\s*:\s*ref/i.test(text)) scanTypes.push('ref (Non-Unique Index Lookup)');
     if (/\btype\b\s*:\s*eq_ref/i.test(text)) scanTypes.push('eq_ref (Unique/Primary Key Lookup)');
 
-    if (/Using filesort/i.test(text)) {
+    // 3. Tree and Tabular Filesort
+    if (/->\s*Sort:/i.test(text) || /Using filesort/i.test(text)) {
       issues.push({
         type: 'USING_FILESORT_OR_TEMPORARY',
         severity: 'HIGH',
-        description: `'Using filesort': MySQL must perform an extra sorting pass over the results instead of reading rows in natural index order.`
+        description: `'Sort / Using filesort': MySQL must perform an extra sorting pass over the results instead of reading rows in natural index order.`
       });
       recommendations.push({
         action: 'Align the composite index with the ORDER BY column following the ESR rule (Equality -> Sort -> Range).'
       });
     }
 
-    if (/Using temporary/i.test(text)) {
+    // 4. Tree and Tabular Temporary Tables
+    if (/->\s*Temporary table/i.test(text) || /->\s*Aggregate using temporary table/i.test(text) || /Using temporary/i.test(text)) {
       issues.push({
         type: 'USING_TEMPORARY_TABLE',
         severity: 'HIGH',
-        description: `'Using temporary': MySQL needs to create an internal temporary table to hold intermediate results (common with GROUP BY / DISTINCT).`
+        description: `'Using temporary table': MySQL needs to create an internal temporary table to hold intermediate results (common with GROUP BY / DISTINCT).`
       });
       recommendations.push({
         action: 'Ensure GROUP BY and ORDER BY clauses reference the same table and columns in the same order.'

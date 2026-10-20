@@ -1,198 +1,164 @@
-# Implementation Plan: Enterprise v1.2.0 Forensic Deep Upgrade for `@maccpro/database-mcp`
+# Implementation Plan: Enterprise Remediation & Production Hardening for `@maccpro/database-mcp` (v1.2.1)
 
-## 1. Objective
-- **User request:** "ero govit theke resanalize kore plan remake kor /plan" (Re-analyze from even deeper and remake the implementation plan).
-- **Current behavior:** `@maccpro/database-mcp` currently runs 9 tools with 28 passing unit tests. However, deep forensic analysis reveals critical architectural gaps, production lock hazards, and missing modern database capabilities:
-  1. **ULID/UUID Multi-Tenant Type Mismatch:** `tenants.id` with `uuid`/`ulid` primary keys creates foreign key constraint collisions because `tenant_id` defaults to `unsignedBigInteger` in `MigrationEngine` and `SchemaModeler`.
-  2. **PostgreSQL `CREATE INDEX CONCURRENTLY` Runtime Crash:** Laravel wraps migrations in transactions (`DB::beginTransaction()`). Concurrent index creation without `public bool $withinTransaction = false;` immediately crashes with `ERROR: CREATE INDEX CONCURRENTLY cannot run inside a transaction block`.
-  3. **`EXPLAIN (FORMAT JSON)` AST Blind Spot:** `ExplainAnalyzer` uses text-based regexes (`Seq Scan on ...`, `type: ALL`) that fail to match structured JSON execution plans from PostgreSQL (`"Node Type": "Seq Scan"`) and MySQL (`"access_type": "ALL"`). It also lacks Buffer Hit Ratio and JIT overhead detection.
-  4. **Multi-Tenant Unique Key Namespace Collision:** Single-column unique constraints in multi-tenant discriminator mode (`unique: true`) generate global unique indexes, preventing Tenant B from using values used by Tenant A.
-  5. **SQLite Dialect Neglect:** Any SQLite request silently falls back to MariaDB, generating incompatible syntax (`after()`, `first()`, `virtualAs()`, `ALGORITHM=INPLACE`).
-  6. **Multi-Table JOIN Alias Misattribution in Query Analyzer:** Queries with joins dump all predicates into a single composite index recommendation for the primary table, even when columns belong to joined tables.
-  7. **Missing Modern AI Capabilities:** Zero support for `pgvector` (`vector` data type, dimensions, HNSW/IVFFlat indexes, cosine distance `<=>`).
-  8. **Missing Relational Patterns:** Polymorphic relationships (`morphs`, `uuidMorphs`, `ulidMorphs`), composite primary keys for pivot tables, check constraints (`check()`), and PostgreSQL partial/filtered indexes.
-  9. **Missing High-Availability Infrastructure:** No connection pooler tuners (PgBouncer transaction pooling & ProxySQL), leaving systems vulnerable to connection starvation under high concurrency.
-  10. **Missing Data Masking / GDPR Sanitization:** No automated PII scrubbing runbook for dumping production databases to staging/dev.
-  11. **Missing Model Factory & Seeder Generator:** No tool to generate realistic faker factories and seeders matching migrations.
-  12. **MCP Protocol Gaps:** Missing `resources/list`, `resources/read`, `prompts/list`, and `prompts/get`.
-- **Desired behavior:** A 100% robust, enterprise-grade, offline database MCP server (v1.2.0) with complete dialect support (PostgreSQL, MariaDB, MySQL, SQLite), robust AST-aware explain analysis, zero-downtime concurrent indexing, multi-tenant isolation safety, AI vector search, connection pooling, data masking, seeder generation, and full MCP resources & prompts.
+## Goal Description
+Perform a comprehensive forensic remediation and feature expansion on `@maccpro/database-mcp` (v1.2.1). The audit identified 12 critical bugs (e.g. inverted lock hazard logic, dropped column modifiers on UUID/ULID, hardcoded `::bigint` in PostgreSQL RLS, foreign key constraint violations in seeders, MySQL Error 1503 in table partitioning, and invalid SQLite fallback) and 8 missing capabilities (e.g. modern MySQL 8.0+ `EXPLAIN ANALYZE` tree parsing, PostgreSQL partial indexes, SQLite zero-downtime hot backups). 
+
+This plan details the exact architectural changes across all 11 engine modules, server protocol handlers, and test suites to achieve a 100% deterministic, zero-defect, offline database MCP server.
 
 ---
 
-## 2. Repository Findings
-- **Application/runtime:** Node.js ES Modules (100% offline, pure native `node:*` APIs, zero external npm dependencies).
-- **Target location:** `servers/database-mcp/`.
-- **Existing architecture:**
-  - `server.js`: Stdio JSON-RPC 2.0 server.
-  - `engine/dialect-manager.js`: Dialect normalization, type mappings, modifiers.
-  - `engine/migration-engine.js`: Anonymous Laravel migration generator.
-  - `engine/query-analyzer.js`: SARGability and ESR indexing advisor.
-  - `engine/lock-auditor.js`: DDL lock hazard auditor.
-  - `engine/schema-modeler.js`: Multi-tenant entity designer, Mermaid ER, and RLS policies.
-  - `engine/config-tuner.js`: Hardware sizing for `my.cnf` and `postgresql.conf`.
-  - `engine/maintenance-engine.js`: Health diagnostics and DR runbooks.
-  - `engine/explain-analyzer.js`: Execution plan analyzer.
-  - `engine/quality-gate.js`: Pre-commit reversibility and lock gate.
-  - `test/run-tests.js`: 28 unit tests.
-- **Working-tree state:**
-  - Branch: `main`.
-  - Working tree clean (all previous commits clean).
-  - Scope strictly isolated to `servers/database-mcp/` and root `implementation_plan.md`.
+## User Review Required
+
+> [!IMPORTANT]
+> **PostgreSQL Concurrency Default Fix in `LockAuditor`:**
+> Previously, omitting `concurrent` defaulted to `LOW RISK` due to `op.concurrent !== false`. The fix strictly requires `op.concurrent === true` to be rated `LOW RISK`. Any migration creating or dropping an index without explicit `concurrent: true` is now flagged as `HIGH RISK` because standard PostgreSQL DDL acquires a `ShareLock` or `AccessExclusiveLock`.
+
+> [!WARNING]
+> **PgBouncer Transaction Pooling Mode PDO Configuration:**
+> In `engine/config-tuner.js`, the note previously advised disabling PDO emulation. In PgBouncer transaction pooling mode, named server-side prepared statements collide across multiplexed backend connections. The recommendation is corrected to set `PDO::ATTR_EMULATE_PREPARES => true` (or configure `max_prepared_statements` in PgBouncer 1.21+).
+
+> [!NOTE]
+> **MySQL Table Partitioning Pre-Requisite (Error 1503):**
+> MySQL requires that all columns used in `PARTITION BY RANGE` must be included in the table's `PRIMARY KEY`. The advisor now generates explicit pre-requisite DDL to modify the primary key to composite `(id, created_at)` before applying table partitioning.
 
 ---
 
-## 3. Scope
-
-### In scope
-1. **Critical Defect Remediation:**
-   - Dynamic foreign key typing in `MigrationEngine` and `SchemaModeler` matching primary key strategy (`foreignId`, `foreignUuid`, `foreignUlid`).
-   - Emit `public bool $withinTransaction = false;` in Laravel migrations when using `CONCURRENTLY`, and enforce it in `QualityGate`.
-   - Implement recursive JSON AST traverser in `ExplainAnalyzer` for PostgreSQL and MySQL JSON execution plans, including Buffer Hit Ratio and JIT detection.
-   - Automatically convert multi-tenant unique constraints to composite unique indexes `['tenant_id', ...column]`.
-   - Prevent multi-table JOIN column misattribution in `QueryAnalyzer` by grouping predicates per table alias.
-2. **SQLite Dialect Integration:**
-   - Full support for `sqlite` in `DialectManager` and `MigrationEngine` (suppressing incompatible clauses like `after`, `first`, `ALGORITHM=INPLACE`).
-   - SQLite WAL mode and high-concurrency PRAGMA tuning in `ConfigTuner`.
-3. **Modern AI & Relational Expansion:**
-   - Add `vector` column type with dimension specification for PostgreSQL pgvector.
-   - Add HNSW and IVFFlat vector index generation and cosine distance `<=>` SARGability recognition.
-   - Add polymorphic relations: `morphs`, `nullableMorphs`, `uuidMorphs`, `ulidMorphs`.
-   - Add composite primary keys for pivot tables (`$table->primary(['col1', 'col2'])`).
-   - Add check constraints (`$table->check(...)`) and PostgreSQL partial indexes (`WHERE ...`).
-4. **New High-Availability & Production DBA Tools in `server.js`:**
-   - `db_tune_connection_pooler`: Generates production-ready `pgbouncer.ini` (Transaction Pooling mode) and ProxySQL configuration.
-   - `db_data_masking_runbook`: Generates GDPR/PCI-DSS compliant production data sanitization/scrubbing SQL scripts.
-   - `db_generate_seeder_factory`: Generates Laravel Model Factories and Database Seeders with realistic Faker definitions.
-   - `db_partitioning_advisor`: Generates zero-downtime Range and List table partitioning migrations for high-volume tables.
-5. **Full MCP Protocol Compliance:**
-   - Implement `resources/list` and `resources/read` for configuration templates and runbooks.
-   - Implement `prompts/list` and `prompts/get` for interactive database optimization workflows.
-   - Synchronize version to `1.2.0` across `package.json`, `server.js`, and documentation.
-6. **Testing & Verification:**
-   - Expand `test/run-tests.js` to cover all new features, bug fixes, AST traversals, and new tools (target 40+ passing assertions).
-
-### Out of scope
-- Modifying other servers in `servers/` (`backend-mcp`, `code-impact-analyzer`, etc.).
-- Adding third-party npm packages (must retain 100% native Node.js zero-dependency standard).
-- Connecting directly to live production database sockets.
+## Open Questions
+- None. All requirements and architectural specifications are self-contained within `@maccpro/database-mcp` and adhere to 100% native Node.js zero-dependency standards.
 
 ---
 
-## 4. Proposed Changes
+## Proposed Changes
 
-| Step | File | Proposed Change | Reason | Risk |
-|---|---|---|---|---|
-| 1 | `engine/dialect-manager.js` | Add `sqlite` dialect; add `vector` (pgvector), `morphs`, `uuidMorphs`, `ulidMorphs`, `check`, `invisible`, `unsignedDecimal`; handle SQLite modifier suppressions. | Complete dialect coverage including AI vector embeddings and SQLite. | Low |
-| 2 | `engine/migration-engine.js` | Dynamic FK typing (`foreignUuid`/`foreignUlid`); emit `public bool $withinTransaction = false;` on concurrent DDL; support composite primary keys for pivot tables; composite unique keys for multi-tenancy; add check constraints and partial indexes. | Prevents FK runtime crashes and PostgreSQL transaction aborts. | Low |
-| 3 | `engine/explain-analyzer.js` | Implement recursive JSON AST traverser for PostgreSQL and MySQL JSON plans; extract buffer hit ratios (`shared_buffers` efficiency), actual timings, JIT compilation delays. | Accurate diagnostics for modern JSON execution plans. | Low |
-| 4 | `engine/query-analyzer.js` | Implement alias-aware predicate attribution across JOINs; add implicit type coercion detection; recognize vector similarity operators (`<=>`, `<->`). | Eliminates multi-table index pollution and catches hidden table scans. | Medium |
-| 5 | `engine/lock-auditor.js` | Add lock hazard analysis for `drop_index` (PostgreSQL non-concurrent), `add_check_constraint` (NOT VALID pattern), unindexed FK deletion locks, and table partitioning. | Complete zero-downtime safety auditing. | Low |
-| 6 | `engine/schema-modeler.js` | Support composite primary keys for pivot tables; scope multi-tenant unique keys with `tenant_id`; align ULID/UUID foreign keys. | Accurate ER diagrams and leak-proof tenant isolation. | Low |
-| 7 | `engine/config-tuner.js` | Add SQLite high-concurrency PRAGMA tuning; add dedicated `tunePooler()` for PgBouncer (`pgbouncer.ini` & `userlist.txt`) and ProxySQL. | Prevents connection starvation in high-concurrency environments. | Low |
-| 8 | `engine/maintenance-engine.js` | Add data masking/scrubbing runbook generator (`getDataMaskingRunbook`); add deadlock diagnostic queries (`SHOW ENGINE INNODB STATUS`, `pg_stat_database.deadlocks`); add buffer cache hit ratio query. | Complete production DBA operational capability. | Low |
-| 9 | `engine/seeder-generator.js` *(New)* | Create dedicated generator for Laravel Model Factories and Database Seeders with realistic Faker definitions and tenant relations. | Accelerates development lifecycle. | Low |
-| 10| `engine/partition-advisor.js` *(New)* | Create dedicated advisor and migration generator for Range and List table partitioning. | Enables scalable handling of 50M+ row ERP/POS tables. | Low |
-| 11| `engine/quality-gate.js` | Enforce `public bool $withinTransaction = false;` when `CONCURRENTLY` is used; verify multi-tenant unique indexes are tenant-scoped. | Pre-commit prevention of production migration failures. | Low |
-| 12| `server.js` | Expose new tools (`db_tune_connection_pooler`, `db_data_masking_runbook`, `db_generate_seeder_factory`, `db_partitioning_advisor`); implement MCP `resources/*` and `prompts/*`; bump version to `1.2.0`. | Full MCP feature exposure and protocol compliance. | Low |
-| 13| `instructions.md`, `README.md`, `package.json`, `.env.example` | Update tool list, parameters, MCP resource/prompt documentation, and version numbers. | Complete documentation synchronization. | None |
-| 14| `test/run-tests.js` | Author comprehensive unit test suite covering all fixes, JSON AST parsing, pooler tuning, seeder generation, and quality gates. | Evidence-based verification. | None |
+```mermaid
+flowchart TD
+    subgraph Client ["MCP Client / AI Coding Agent"]
+        ToolsCall["tools/call"]
+        PromptsGet["prompts/get"]
+        ResourcesRead["resources/read"]
+    end
 
----
+    subgraph Server ["database-mcp (v1.2.1)"]
+        ServerCore["server.js (JSON-RPC 2.0)"]
+        
+        subgraph Engines ["Engine Modules"]
+            DialectMgr["dialect-manager.js (Modifiers & Types)"]
+            MigEngine["migration-engine.js (Reversible DDL)"]
+            LockAudit["lock-auditor.js (Zero-Downtime Locks)"]
+            SchemaModel["schema-modeler.js (ER & Dynamic RLS)"]
+            QueryOpt["query-analyzer.js (ESR & SARGability)"]
+            ExplainOpt["explain-analyzer.js (AST & Tree Plans)"]
+            CfgTune["config-tuner.js (Hardware & Poolers)"]
+            MaintEngine["maintenance-engine.js (Health & Hot Backups)"]
+            SeedGen["seeder-generator.js (FK Factories & Inflection)"]
+            PartAdv["partition-advisor.js (Range/List Partitioning)"]
+            QualityGateEngine["quality-gate.js (Pre-Commit Gate)"]
+        end
+    end
 
-## 5. Design and Compatibility
-
-### Backward Compatibility
-- 100% backward compatible: All 9 existing tool names, parameter schemas, and response formats are strictly maintained.
-- New tools and parameters are purely additive.
-- Zero external npm dependencies: All AST traversal, config generation, and formatting use native Node.js.
-
-### Architectural Decisions
-1. **Dynamic Foreign Key Resolution:** When `primary_key_type` is `uuid`, foreign keys are generated as `$table->foreignUuid('tenant_id')`. When `ulid`, `$table->foreignUlid('tenant_id')`. When `id`, `$table->foreignId('tenant_id')`.
-2. **PostgreSQL Transaction Safety:** When any operation uses `CONCURRENTLY`, the migration generator sets `public bool $withinTransaction = false;` in the generated anonymous migration class.
-3. **JSON AST Traversal:** Instead of naive string regexes, `ExplainAnalyzer` checks if the input is valid JSON or an object. If so, it walks the plan node tree recursively, checking `Node Type`, `Relation Name`, `Actual Total Time`, `Shared Hit Blocks`, and `Shared Read Blocks`.
-4. **Tenant-Scoped Unique Constraints:** When `tenancy_mode: 'discriminator'` is active, any column defined with `unique: true` is automatically emitted as `$table->unique(['tenant_id', 'column_name'])`.
-
----
-
-## 6. Security and Data Integrity
-- **Tenant Isolation:** Enforces tenant-scoped composite unique constraints, preventing cross-tenant unique key namespace exhaustion or collisions.
-- **PostgreSQL RLS:** Guaranteed `FORCE ROW LEVEL SECURITY` prevents superuser/table owner data leakage.
-- **Data Masking:** PII scrubbers use cryptographic hashes or deterministic fake data, never storing or exposing unmasked credentials or customer identities.
-- **Zero Raw Execution:** The server remains 100% deterministic and offline, generating audited code rather than executing raw live SQL against untrusted databases.
+    ToolsCall --> ServerCore
+    PromptsGet --> ServerCore
+    ResourcesRead --> ServerCore
+    ServerCore --> Engines
+```
 
 ---
 
-## 7. Database and Operations
-- **Migration Scope:** Strictly routes standard migrations to `database/migrations/` and multi-tenant migrations to `database/migrations/tenant/`.
-- **Zero-Downtime:** Concurrent indexing, non-blocking check constraints (`NOT VALID` -> `VALIDATE CONSTRAINT`), and expand-contract column modifications.
-- **Connection Pooling:** PgBouncer transaction pooling ensures PostgreSQL instances handle 10,000+ client connections with minimal memory footprint.
+### Core Engine & Dialect Mapping
+
+#### [MODIFY] [`engine/dialect-manager.js`](file:///d:/mcp-collection/servers/database-mcp/engine/dialect-manager.js)
+- **Eliminate Early Returns:** Replace hardcoded returns on `id`, `uuid`, `ulid`, `foreign_uuid`, `foreign_ulid`, `morphs`, `uuidMorphs`, `ulidMorphs`, `rememberToken`, and `softDeletes` with progressive method builders.
+- **Modifier Retention:** Ensure all modifiers (`->nullable()`, `->unique()`, `->index()`, `->default()`, `->comment()`, `->after()`, `->check()`, `->storedAs()`) chain properly without being dropped.
+- **PostgreSQL Generated Column Safety:** Automatically map `virtualAs()` to `storedAs()` for PostgreSQL since Postgres only supports stored generated columns.
+
+#### [MODIFY] [`engine/migration-engine.js`](file:///d:/mcp-collection/servers/database-mcp/engine/migration-engine.js)
+- **Tenant Scope Alignment:** When `isTenant` or `scope: 'tenant'` is specified, automatically inject `tenant_id` and convert single-column unique indexes to tenant-scoped composite unique indexes `['tenant_id', ...column]`.
+- **PostgreSQL Concurrent Drop Index:** Support `concurrent: true` in `drop_indexes` by emitting `DROP INDEX CONCURRENTLY IF EXISTS` and setting `public bool $withinTransaction = false;`.
+- **PostgreSQL Partial Indexes:** Support `idx.where` condition in `add_indexes` (e.g. `WHERE status = 'active'`).
 
 ---
 
-## 8. Implementation Sequence
+### Concurrency, Lock Auditing & Security Policies
 
-### Phase 1: Core Engine Bug Fixes & Expansions
-1. Update `engine/dialect-manager.js` to support SQLite, pgvector, polymorphic types, and constraint modifiers.
-2. Update `engine/migration-engine.js` with dynamic FK typing, `$withinTransaction = false`, composite PKs, composite multi-tenant unique keys, and check constraints.
-3. Update `engine/explain-analyzer.js` with recursive JSON AST traversal for PostgreSQL and MySQL execution plans.
-4. Update `engine/query-analyzer.js` with table-alias grouping, implicit type coercion detection, and vector distance operators.
-5. Update `engine/lock-auditor.js` with non-concurrent drop index hazards and check constraint validation steps.
-6. Update `engine/schema-modeler.js` with pivot table composite PKs and tenant-scoped unique constraints.
+#### [MODIFY] [`engine/lock-auditor.js`](file:///d:/mcp-collection/servers/database-mcp/engine/lock-auditor.js)
+- **Inverted Logic Remediation:** Change `op.concurrent !== false` to `op.concurrent === true` for both `add_index` and `drop_index`.
+- **Expanded Lock Hazards:** Add dedicated hazard assessments for:
+  - `truncate_table`: Critical AccessExclusiveLock and table lock risks.
+  - `drop_table`: Critical data destruction and metadata lock blocking.
+  - `add_primary_key` / `modify_primary_key`: Full table rebuild in MySQL/InnoDB (clustered index copy).
+  - `unindexed_foreign_key`: High-risk cascade table scan locks during parent row deletion.
+  - `convert_charset` / `change_collation`: Critical full table rewrite under exclusive table lock.
 
-### Phase 2: High-Availability & Production DBA Tooling
-7. Update `engine/config-tuner.js` with SQLite PRAGMA sizing and PgBouncer/ProxySQL pooler tuning.
-8. Update `engine/maintenance-engine.js` with data masking runbooks, deadlock diagnostics, and buffer hit ratio queries.
-9. Create `engine/seeder-generator.js` for Laravel Model Factories and Seeders.
-10. Create `engine/partition-advisor.js` for Range and List table partitioning migrations.
-11. Update `engine/quality-gate.js` to enforce `$withinTransaction = false` on concurrent DDL and tenant-scoped unique indexes.
-
-### Phase 3: Protocol, Server Exposure & Verification
-12. Update `server.js` to register the 4 new tools, implement `resources/*` and `prompts/*`, and bump version to `1.2.0`.
-13. Update `package.json`, `.env.example`, `README.md`, and `instructions.md`.
-14. Expand `test/run-tests.js` with comprehensive assertions (target 40+ tests).
-15. Run full test suite and verify 100% pass rate.
+#### [MODIFY] [`engine/schema-modeler.js`](file:///d:/mcp-collection/servers/database-mcp/engine/schema-modeler.js)
+- **Dynamic RLS Type Casting:** Pass `primary_key_type` to `_generateTenantPolicies()`. Cast `current_setting('app.current_tenant_id', true)` to `::uuid` when PK is UUID, `::text` when ULID, and `::bigint` when integer ID.
+- **Explicit `WITH CHECK`:** Append `WITH CHECK` to prevent cross-tenant insertion leaks.
 
 ---
 
-## 9. Verification Plan
+### SARGability, Query Optimization & Execution Plans
 
-| Check | Command | Expected Evidence | Required? |
-|---|---|---|---|
-| Complete Test Suite | `node servers/database-mcp/test/run-tests.js` | All 40+ assertions PASS with 0 failures | Yes |
-| Dialect SQLite & Vector | Included in test suite | Proper mapping of SQLite and pgvector types | Yes |
-| Dynamic FK Typing | Included in test suite | ULID/UUID primary key maps to `foreignUlid`/`foreignUuid` | Yes |
-| WithinTransaction Emitted | Included in test suite | `$withinTransaction = false;` present on concurrent DDL | Yes |
-| JSON Explain AST Parsing | Included in test suite | Correct extraction of Seq Scan and Buffer stats from JSON | Yes |
-| Multi-Table Query Indexing | Included in test suite | Predicates grouped by table alias, no cross-table pollution | Yes |
-| Connection Pooler Tuner | Included in test suite | Valid `pgbouncer.ini` generated with transaction pooling | Yes |
-| Pre-Commit Quality Gate | Included in test suite | Reversibility and transaction checks pass/fail accurately | Yes |
-| MCP Protocol List Tools | Manual JSON-RPC test | Returns all 13 tools, resources, and prompts | Yes |
+#### [MODIFY] [`engine/query-analyzer.js`](file:///d:/mcp-collection/servers/database-mcp/engine/query-analyzer.js)
+- **Numeric Literal Exclusion:** Ignore pure numbers `/^[0-9]+$/` in equality, range, and sort regex matching to prevent queries with `WHERE 1 = 1` from creating index columns named `1`.
+- **Robust English Singularization:** Replace naive `.replace(/s$/, '')` with inflection helper handling `ies` $\rightarrow$ `y` (`categories` $\rightarrow$ `Category`), `sses` $\rightarrow$ `ss` (`addresses` $\rightarrow$ `Address`), `status`, `business`, etc.
+
+#### [MODIFY] [`engine/explain-analyzer.js`](file:///d:/mcp-collection/servers/database-mcp/engine/explain-analyzer.js)
+- **MySQL 8.0+ Tree-Format Recognition:** Add regex detection for `-> Table scan on <table_name>`, `-> Sort:`, `-> Temporary table`, and `-> Index lookup` in `_analyzeMySQLPlanText()`.
+- **Clean Fallback Execution:** Guard JSON vs Text parsing so plain text regexes are not run on JSON string representations.
 
 ---
 
-## 10. Acceptance Criteria
-- [x] Foreign keys referencing `uuid` or `ulid` primary keys generate matching `foreignUuid` / `foreignUlid` columns without type mismatch.
-- [x] Concurrent index creation migrations automatically include `public bool $withinTransaction = false;`.
-- [x] `ExplainAnalyzer` correctly parses both raw text and JSON AST outputs for PostgreSQL and MySQL plans.
-- [x] Multi-tenant tables with `unique: true` generate composite unique constraints scoped by `tenant_id`.
-- [x] SQLite dialect is fully recognized, correctly formatting types and omitting invalid MySQL/PG modifiers.
-- [x] Multi-table queries with JOINs do not pollute primary table index recommendations with joined table columns.
-- [x] 4 new tools (`db_tune_connection_pooler`, `db_data_masking_runbook`, `db_generate_seeder_factory`, `db_partitioning_advisor`) are registered and operational.
-- [x] MCP Resources (`resources/list`, `resources/read`) and Prompts (`prompts/list`, `prompts/get`) are supported in `server.js`.
-- [x] Test suite passes 100% with zero external npm dependencies.
+### High-Availability, Maintenance & Seeders
+
+#### [MODIFY] [`engine/config-tuner.js`](file:///d:/mcp-collection/servers/database-mcp/engine/config-tuner.js)
+- **Correct PgBouncer Emulation Advice:** Advise `PDO::ATTR_EMULATE_PREPARES => true` in Laravel's `config/database.php` for PgBouncer transaction pooling mode.
+
+#### [MODIFY] [`engine/maintenance-engine.js`](file:///d:/mcp-collection/servers/database-mcp/engine/maintenance-engine.js)
+- **Dedicated SQLite Runbook (`_getSQLiteRunbook`):** Generate `PRAGMA integrity_check;`, `PRAGMA foreign_key_check;`, `PRAGMA freelist_count;`, `VACUUM;`, `PRAGMA optimize;`, and `PRAGMA wal_checkpoint(TRUNCATE);`.
+- **SQLite Zero-Downtime Hot Backup:** In `getBackupRunbook`, emit `VACUUM INTO 'backup.sqlite'` (supported in SQLite 3.27+) and `.backup` CLI syntax.
+
+#### [MODIFY] [`engine/seeder-generator.js`](file:///d:/mcp-collection/servers/database-mcp/engine/seeder-generator.js)
+- **Foreign Key Factory Binding:** Detect `*_id` foreign key columns (e.g. `user_id`, `category_id`) and automatically bind them to `\App\Models\Parent::factory()` instead of random integers, preventing constraint crashes.
+- **Robust Model Inflection:** Utilize singularization helper for model names.
+- **Empty Tenant Guard:** Ensure at least one tenant exists before looping `Tenant::all()` in multi-tenant seeders.
+
+#### [MODIFY] [`engine/partition-advisor.js`](file:///d:/mcp-collection/servers/database-mcp/engine/partition-advisor.js)
+- **MySQL Primary Key Harmonization:** Emit pre-requisite guidance for composite primary key `(id, created_at)` to eliminate MySQL Error 1503.
+- **SQLite Unsupported Advisory:** Return structured guidance explaining that SQLite does not support native partitioning and provide archival table recipes.
+
+#### [MODIFY] [`engine/quality-gate.js`](file:///d:/mcp-collection/servers/database-mcp/engine/quality-gate.js)
+- **Fluent Unique Constraint Detection:** Detect `$table->string('email')->unique();` and `$table->uuid('code')->unique();` in tenant migrations.
+- **Dialect-Aware Concurrency Check:** Suppress non-concurrent warnings when dialect is explicitly MySQL or SQLite.
 
 ---
 
-## 11. Risks, Blockers, and Open Questions
-- **Risk:** Backward compatibility on existing test queries in `QueryAnalyzer`.
-  - *Mitigation verified:* All 30 unit tests pass without regressions.
-- **Risk:** Schema complexity in JSON execution plans.
-  - *Mitigation verified:* Recursive AST node traversal with fallback to text regexes implemented and verified.
+### Protocol Server & Verification
+
+#### [MODIFY] [`server.js`](file:///d:/mcp-collection/servers/database-mcp/server.js) & [`package.json`](file:///d:/mcp-collection/servers/database-mcp/package.json)
+- Add `sqlite` to `db_maintenance_runbook`, `db_backup_restore_runbook`, `db_data_masking_runbook`, and `db_partitioning_advisor` dialect schemas.
+- In JSON-RPC line handler, return `-32700 Parse error` on invalid JSON.
+- In `prompts/get`, return `-32602 Prompt not found` for unrecognized prompts.
+- In `resources/read`, return `-32602 Resource not found` for unrecognized URIs.
+- Bump version to `1.2.1`.
+
+#### [MODIFY] [`test/run-tests.js`](file:///d:/mcp-collection/servers/database-mcp/test/run-tests.js)
+- Expand test suite from 30 to 43+ assertions covering all 12 bug fixes and new capabilities.
 
 ---
 
-## 12. Approval
-- **Plan status:** Approved
-- **Approved scope:** Implementation of all 14 steps in Proposed Changes.
-- **Approval evidence:** User explicit approval: "approve act as expert" (2026-10-20T08:56:33+06:00).
+## Verification Plan
 
+### Automated Tests
+Run the standalone offline test suite:
+```powershell
+node servers/database-mcp/test/run-tests.js
+```
+*Expected Result:*
+- 43 Passed, 0 Failed.
+- Version header displays `(v1.2.1)`.
+
+### Git Status & Code Cleanliness
+```powershell
+git status --short
+```
+*Expected Result:*
+- All 15 task-related files modified and tracked. No orphaned temporary files or secrets.

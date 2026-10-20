@@ -41,7 +41,7 @@ function runTest(name, fn) {
   }
 }
 
-console.log('\n--- Starting database-mcp Verification Suite (v1.2.0) ---\n');
+console.log('\n--- Starting database-mcp Verification Suite (v1.2.1) ---\n');
 
 // ==========================================
 // 1. DialectManager Tests
@@ -442,6 +442,181 @@ return new class extends Migration {
   try {
     const gate = QualityGate.evaluate({ files: [tmpFile] });
     assert.ok(gate.violations.some(v => v.rule === 'TENANT_UNIQUE_NAMESPACE_LEAK'));
+  } finally {
+    if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+    if (fs.existsSync(tmpDir)) fs.rmdirSync(tmpDir);
+  }
+});
+
+// ==========================================
+// 12. Forensic Bug Fixes & Hardening (v1.2.1)
+// ==========================================
+runTest('LockAuditor: non-concurrent add_index is HIGH risk when concurrent omitted', () => {
+  const audit = LockAuditor.audit({
+    table: 'users',
+    operations: [{ type: 'add_index', column: 'email' }],
+    dialect: 'postgresql'
+  });
+  assert.strictEqual(audit.highest_risk_level, 'HIGH', 'Default omitted concurrent must be HIGH risk');
+  assert.strictEqual(audit.zero_downtime_compliant, false);
+});
+
+runTest('LockAuditor: identify truncate, drop_table, and unindexed FK hazards', () => {
+  const audit = LockAuditor.audit({
+    table: 'invoices',
+    operations: [
+      { type: 'truncate_table' },
+      { type: 'unindexed_foreign_key', column: 'customer_id' }
+    ],
+    dialect: 'postgresql'
+  });
+  assert.strictEqual(audit.highest_risk_level, 'CRITICAL');
+  assert.ok(audit.hazards.some(h => h.operation.includes('TRUNCATE TABLE')));
+  assert.ok(audit.hazards.some(h => h.operation.includes('UNINDEXED FOREIGN KEY')));
+});
+
+runTest('DialectManager: preserve modifiers on uuid, ulid, and polymorphic types', () => {
+  const colUuid = DialectManager.mapLaravelColumn('uuid', 'parent_id', { nullable: true, index: true }, 'postgresql');
+  assert.ok(colUuid.includes('->nullable()'), `UUID should have nullable: ${colUuid}`);
+  assert.ok(colUuid.includes('->index()'), `UUID should have index: ${colUuid}`);
+
+  const colUlid = DialectManager.mapLaravelColumn('ulid', 'tracking_no', { nullable: true, unique: true });
+  assert.ok(colUlid.includes('->nullable()'), `ULID should have nullable: ${colUlid}`);
+  assert.ok(colUlid.includes('->unique()'), `ULID should have unique: ${colUlid}`);
+
+  const colMorph = DialectManager.mapLaravelColumn('morphs', 'taggable', { nullable: true });
+  assert.ok(colMorph.includes('nullableMorphs'), `Morphs should be nullableMorphs: ${colMorph}`);
+});
+
+runTest('SchemaModeler: dynamic RLS type casting for UUID and ULID', () => {
+  const schemaUuid = SchemaModeler.design({
+    project_name: 'UuidSaaS',
+    dialect: 'postgresql',
+    tenancy_mode: 'discriminator',
+    primary_key_type: 'uuid',
+    tables: [{ name: 'invoices', columns: [{ name: 'amount', type: 'decimal' }] }]
+  });
+  assert.ok(schemaUuid.tenant_security_policies.rls_sql.includes('::uuid'), 'RLS should cast to ::uuid');
+  assert.ok(schemaUuid.tenant_security_policies.rls_sql.includes('WITH CHECK'), 'RLS should include WITH CHECK');
+
+  const schemaUlid = SchemaModeler.design({
+    project_name: 'UlidSaaS',
+    dialect: 'postgresql',
+    tenancy_mode: 'discriminator',
+    primary_key_type: 'ulid',
+    tables: [{ name: 'invoices', columns: [{ name: 'amount', type: 'decimal' }] }]
+  });
+  assert.ok(schemaUlid.tenant_security_policies.rls_sql.includes('::text'), 'RLS should cast to ::text for ULID');
+});
+
+runTest('MigrationEngine: scope tenant automatically scopes tenant_id and unique keys', () => {
+  const migration = MigrationEngine.generate({
+    table_name: 'customers',
+    operation: 'create_table',
+    scope: 'tenant',
+    columns: [{ name: 'phone', type: 'string', unique: true }]
+  });
+  assert.ok(migration.target_path.includes('database/migrations/tenant/'));
+  assert.ok(migration.php_code.includes('tenant_id'), 'Should include tenant_id');
+  assert.ok(migration.php_code.includes("$table->unique(['tenant_id', 'phone']);"), 'Should scope unique');
+});
+
+runTest('MigrationEngine: PostgreSQL concurrent drop_indexes disables transaction wrapping', () => {
+  const migration = MigrationEngine.generate({
+    table_name: 'users',
+    operation: 'drop_indexes',
+    database_type: 'postgresql',
+    concurrent: true,
+    indexes: [{ columns: ['email'], name: 'idx_users_email' }]
+  });
+  assert.ok(migration.php_code.includes('public bool $withinTransaction = false;'));
+  assert.ok(migration.php_code.includes('DROP INDEX CONCURRENTLY IF EXISTS idx_users_email'));
+});
+
+runTest('MigrationEngine: partial index with where condition in PostgreSQL', () => {
+  const migration = MigrationEngine.generate({
+    table_name: 'orders',
+    operation: 'add_indexes',
+    database_type: 'postgresql',
+    concurrent: true,
+    indexes: [{ columns: ['user_id'], name: 'idx_active_orders', where: "status = 'active'" }]
+  });
+  assert.ok(migration.php_code.includes("WHERE status = 'active'"));
+});
+
+runTest('SeederGenerator: automatically bind *_id to parent model factory and plural inflection', () => {
+  const seeder = SeederGenerator.generate({
+    table_name: 'categories',
+    count: 20,
+    columns: [
+      { name: 'name', type: 'string' },
+      { name: 'user_id', type: 'foreign_id' }
+    ]
+  });
+  assert.strictEqual(seeder.model_name, 'Category', 'categories must singularize to Category');
+  assert.ok(seeder.files.factory.code.includes("'user_id' => \\App\\Models\\User::factory()"));
+});
+
+runTest('QueryAnalyzer: ignore numeric literal WHERE 1 = 1 in ESR index columns', () => {
+  const query = "SELECT * FROM orders WHERE 1 = 1 AND status = 'completed' AND amount >= 50.0;";
+  const report = QueryAnalyzer.analyze({ query, dialect: 'mariadb', table: 'orders' });
+  const cols = report.recommended_index.columns_in_esr_order;
+  assert.ok(!cols.includes('1'), `Should not contain numeric literal '1': ${cols}`);
+  assert.ok(cols.includes('status'), `Should contain 'status': ${cols}`);
+});
+
+runTest('ExplainAnalyzer: MySQL 8.0+ EXPLAIN ANALYZE tree format recognition', () => {
+  const treePlan = `
+-> Table scan on users  (cost=1.25 rows=10) (actual time=0.045..0.089 rows=10 loops=1)
+-> Sort: users.created_at  (actual time=0.100..0.105 rows=10 loops=1)
+`;
+  const report = ExplainAnalyzer.analyze({ plan: treePlan, dialect: 'mysql' });
+  assert.strictEqual(report.summary.has_sequential_scan, true, 'Should detect tree table scan');
+  assert.strictEqual(report.summary.has_filesort_or_temp, true, 'Should detect tree sort');
+});
+
+runTest('MaintenanceEngine: SQLite runbook and zero-downtime hot backup', () => {
+  const runbook = MaintenanceEngine.getRunbook({ dialect: 'sqlite' });
+  assert.strictEqual(runbook.dialect, 'sqlite');
+  assert.ok(runbook.diagnostic_tasks.some(t => t.diagnostic_sql.includes('PRAGMA integrity_check')));
+
+  const backup = MaintenanceEngine.getBackupRunbook({ dialect: 'sqlite', database_name: 'database.sqlite' });
+  assert.strictEqual(backup.dialect, 'sqlite');
+  assert.ok(backup.online_backup_api.vacuum_into_command.includes('VACUUM INTO'));
+});
+
+runTest('PartitionAdvisor: SQLite unsupported advisory and MySQL Error 1503 advice', () => {
+  const sqliteAdv = PartitionAdvisor.advise({ table_name: 'logs', dialect: 'sqlite' });
+  assert.strictEqual(sqliteAdv.success, false);
+  assert.ok(sqliteAdv.error.includes('SQLite does not support native table partitioning'));
+
+  const mysqlAdv = PartitionAdvisor.advise({ table_name: 'logs', dialect: 'mysql' });
+  assert.strictEqual(mysqlAdv.success, true);
+  assert.ok(mysqlAdv.migration_code.includes('PRIMARY KEY'));
+});
+
+runTest('QualityGate: detect fluent unique constraints in tenant migrations', () => {
+  const fluentTenantMigration = `<?php
+use Illuminate\\Database\\Migrations\\Migration;
+use Illuminate\\Support\\Facades\\Schema;
+return new class extends Migration {
+    public function up(): void {
+        Schema::create('tenant_items', function ($table) {
+            $table->unsignedBigInteger('tenant_id');
+            $table->string('item_code')->unique();
+        });
+    }
+    public function down(): void { Schema::dropIfExists('tenant_items'); }
+};`;
+
+  const tmpFile = path.join(__dirname, 'tenant', 'temp_fluent_tenant.php');
+  const tmpDir = path.dirname(tmpFile);
+  if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+  fs.writeFileSync(tmpFile, fluentTenantMigration);
+
+  try {
+    const gate = QualityGate.evaluate({ files: [tmpFile] });
+    assert.ok(gate.violations.some(v => v.rule === 'TENANT_UNIQUE_NAMESPACE_LEAK' && v.message.includes('item_code')));
   } finally {
     if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
     if (fs.existsSync(tmpDir)) fs.rmdirSync(tmpDir);

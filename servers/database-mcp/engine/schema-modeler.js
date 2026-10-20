@@ -38,7 +38,7 @@ class SchemaModeler {
     const orderedMigrations = this._generateOrderedMigrations(enrichedTables, normalizedDialect, tenancy_mode, primary_key_type);
 
     // 4. Generate Tenant Isolation Policies (PostgreSQL RLS, Schema search_path, or Eloquent Global Scope)
-    const tenantSecurityPolicies = this._generateTenantPolicies(enrichedTables, normalizedDialect, tenancy_mode);
+    const tenantSecurityPolicies = this._generateTenantPolicies(enrichedTables, normalizedDialect, tenancy_mode, primary_key_type);
 
     return {
       success: true,
@@ -269,7 +269,7 @@ class SchemaModeler {
   /**
    * Generate Tenant Security Policies
    */
-  static _generateTenantPolicies(tables, dialect, tenancyMode) {
+  static _generateTenantPolicies(tables, dialect, tenancyMode, pkType = 'id') {
     if (tenancyMode === 'multi_database') {
       return {
         strategy: 'Multi-Database Isolation',
@@ -288,6 +288,8 @@ class SchemaModeler {
 
     if (dialect === 'postgresql') {
       const rlsStatements = [];
+      const rlsCast = pkType === 'uuid' ? '::uuid' : (pkType === 'ulid' ? '::text' : '::bigint');
+
       for (const t of tables) {
         if (t.name === 'tenants' || t.is_global) continue;
         rlsStatements.push(`-- Enable and FORCE Row Level Security for ${t.name} (prevents table owner bypass)
@@ -296,7 +298,8 @@ ALTER TABLE ${t.name} FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY tenant_isolation_policy ON ${t.name}
     FOR ALL
-    USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::bigint);
+    USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')${rlsCast})
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')${rlsCast});
 `);
       }
 

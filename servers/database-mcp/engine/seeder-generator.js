@@ -86,7 +86,17 @@ class ${modelName}Seeder extends Seeder
      */
     public function run(): void
     {
-${isTenant ? `        // Seed across all active tenants\n        \\App\\Models\\Tenant::all()->each(function ($tenant) {\n            ${modelName}::factory()->count(${count})->create([\n                'tenant_id' => $tenant->id,\n            ]);\n        });` : `        ${modelName}::factory()->count(${count})->create();`}
+${isTenant ? `        // Ensure at least one tenant exists
+        if (\\App\\Models\\Tenant::count() === 0) {
+            \\App\\Models\\Tenant::factory()->create();
+        }
+
+        // Seed across all active tenants
+        \\App\\Models\\Tenant::all()->each(function ($tenant) {
+            ${modelName}::factory()->count(${count})->create([
+                'tenant_id' => $tenant->id,
+            ]);
+        });` : `        ${modelName}::factory()->count(${count})->create();`}
     }
 }
 `;
@@ -117,22 +127,48 @@ ${isTenant ? `        // Seed across all active tenants\n        \\App\\Models\\
     };
   }
 
+  static _singularize(word) {
+    const w = String(word || '').toLowerCase();
+    if (w.endsWith('ies')) return w.slice(0, -3) + 'y'; // categories -> category
+    if (w.endsWith('sses')) return w.slice(0, -2); // addresses -> address
+    if (w.endsWith('ches') || w.endsWith('shes') || w.endsWith('xes')) return w.slice(0, -2);
+    if (['status', 'business', 'news', 'series'].includes(w)) return w;
+    if (w.endsWith('s') && !w.endsWith('ss')) return w.slice(0, -1);
+    return w;
+  }
+
   static _inferModelName(tableName) {
     return tableName
       .split('_')
-      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-      .join('')
-      .replace(/s$/, ''); // e.g. orders -> Order, order_items -> OrderItem
+      .map(part => {
+        const sing = this._singularize(part);
+        return sing.charAt(0).toUpperCase() + sing.slice(1);
+      })
+      .join('');
   }
 
   static _mapFakerMethod(col) {
     const name = col.name.toLowerCase();
     const type = (col.type || '').toLowerCase();
 
+    // Foreign Keys: auto-bind to referenced Model factory to prevent integrity constraint failures
+    if (name.endsWith('_id') && name !== 'tenant_id') {
+      const parentRaw = name.slice(0, -3);
+      const parentModel = parentRaw
+        .split('_')
+        .map(p => {
+          const sing = this._singularize(p);
+          return sing.charAt(0).toUpperCase() + sing.slice(1);
+        })
+        .join('');
+      return `\\App\\Models\\${parentModel}::factory()`;
+    }
+
     if (name.includes('email')) return '$this->faker->unique()->safeEmail()';
     if (name.includes('phone') || name.includes('mobile')) return '$this->faker->phoneNumber()';
     if (name.includes('password')) return 'bcrypt(\'secret123\')';
-    if (name.includes('name') || name.includes('title')) return '$this->faker->words(3, true)';
+    if (name === 'name' || name === 'full_name' || name.endsWith('_name')) return '$this->faker->name()';
+    if (name.includes('title')) return '$this->faker->sentence(3)';
     if (name.includes('slug') || name.includes('code')) return '$this->faker->unique()->slug()';
     if (name.includes('sku')) return 'strtoupper($this->faker->bothify(\'SKU-####-????\'))';
     if (name.includes('address')) return '$this->faker->streetAddress()';

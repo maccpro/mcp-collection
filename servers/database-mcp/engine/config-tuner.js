@@ -131,7 +131,7 @@ tcp_keepcnt = 3
           '/etc/pgbouncer/userlist.txt': userlistTxt
         },
         systemd_service: 'sudo systemctl restart pgbouncer',
-        laravel_database_config_note: 'Update config/database.php: set pgsql port to 6432. Set "options" => "-c statement_timeout=5000" and disable PDO ATTR_EMULATE_PREPARES.'
+        laravel_database_config_note: 'Update config/database.php: set pgsql port to 6432. In PgBouncer transaction pooling mode, set PDO::ATTR_EMULATE_PREPARES => true in PDO options to avoid named prepared statement collisions across pooled connections (or configure max_prepared_statements in PgBouncer 1.21+).'
       };
     } else {
       // ProxySQL for MariaDB/MySQL
