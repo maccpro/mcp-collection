@@ -1,6 +1,6 @@
 # Instructions for `database-mcp` MCP Server
 
-The `database-mcp` MCP server provides Enterprise Database Architecture, Reversible Laravel Migrations, SARGable Query Optimization, Execution Plan (EXPLAIN) Diagnostics, Zero-Downtime Lock Risk Auditing, and Hardware Sizing for MariaDB, MySQL, and PostgreSQL.
+The `database-mcp` MCP server provides Enterprise Database Architecture, Reversible Laravel Migrations, SARGable Query Optimization, Execution Plan (EXPLAIN) Diagnostics, Zero-Downtime Lock Risk Auditing, Connection Pooling (PgBouncer/ProxySQL), Table Partitioning, Data Masking (GDPR), Model Factories & Seeders, and Hardware Sizing for MariaDB, MySQL, PostgreSQL, and SQLite.
 
 It operates **100% offline, deterministic, zero-token, and free**, strictly adhering to the **zero-direct-database-alterations** rule by emitting verified code, migrations, and runbooks.
 
@@ -12,7 +12,8 @@ It operates **100% offline, deterministic, zero-token, and free**, strictly adhe
 - **MUST be invoked before committing any database migrations.**
 - Verifies that:
   - Every migration contains matching, tested `up()` and `down()` methods.
-  - Multi-tenant migrations are strictly isolated under `database/migrations/tenant/`.
+  - Multi-tenant migrations are strictly isolated under `database/migrations/tenant/` and unique keys are tenant-scoped.
+  - PostgreSQL concurrent DDL declarations include `public bool $withinTransaction = false;`.
   - No blocking locks or raw non-concurrent DDL exist on production tables.
 - In Antigravity, invoke via `call_mcp_tool`:
   ```json
@@ -24,9 +25,6 @@ It operates **100% offline, deterministic, zero-token, and free**, strictly adhe
     }
   }
   ```
-- **Gate Decision:**
-  - `PASS`: Proceed with Git commit.
-  - `FAIL`: Fix empty `down()` methods or lock violations before committing!
 
 ---
 
@@ -35,26 +33,8 @@ It operates **100% offline, deterministic, zero-token, and free**, strictly adhe
 - When generating migrations:
   - **Standard Scope:** Shared/system tables must target `database/migrations/`.
   - **Tenant Scope:** Multi-tenant SaaS business tables must target `database/migrations/tenant/`.
-  - **Reversibility:** Every operation (`add_columns`, `drop_columns`, `modify_column`, `rename_column`) must have an exact type-safe inverse in `down()`.
-- Example Invocation:
-  ```json
-  {
-    "ServerName": "database-mcp",
-    "ToolName": "db_generate_migration",
-    "Arguments": {
-      "table_name": "invoices",
-      "operation": "create_table",
-      "scope": "tenant",
-      "database_type": "postgresql",
-      "primary_key": "uuid",
-      "columns": [
-        { "name": "invoice_number", "type": "string", "length": 50, "unique": true },
-        { "name": "amount", "type": "decimal", "precision": 15, "scale": 4 },
-        { "name": "status", "type": "enum", "values": ["draft", "issued", "paid"] }
-      ]
-    }
-  }
-  ```
+  - **Reversibility:** Every operation (`add_columns`, `drop_columns`, `modify_column`, `rename_column`, `drop_table`) must have an exact type-safe inverse in `down()`.
+  - **Transaction Safety:** When running `CONCURRENTLY` on PostgreSQL, the migration class must define `public bool $withinTransaction = false;`.
 
 ---
 
@@ -62,46 +42,46 @@ It operates **100% offline, deterministic, zero-token, and free**, strictly adhe
 - **MUST be invoked before altering tables with over 100,000 estimated rows in production.**
 - Analyzes:
   - Table rewrite risks on `MODIFY / CHANGE COLUMN`.
-  - PostgreSQL `AccessExclusiveLock` on non-constant defaults or raw `NOT NULL` additions.
+  - PostgreSQL `AccessExclusiveLock` on non-constant defaults, non-concurrent index drops, or raw `NOT NULL` additions.
   - Metadata lock (MDL) queues in MariaDB/MySQL.
-- In Antigravity:
-  ```json
-  {
-    "ServerName": "database-mcp",
-    "ToolName": "db_migration_audit",
-    "Arguments": {
-      "table": "orders",
-      "dialect": "postgresql",
-      "estimated_rows": 2000000,
-      "operations": [
-        { "type": "add_column", "column": "tracking_code", "nullable": false, "default": "PENDING" }
-      ]
-    }
-  }
-  ```
 
 ---
 
 ### 4. SARGable Query Optimizer & Execution Plan Diagnostics (`db_analyze_query` & `db_explain_analyzer`)
 - **Query Optimization (`db_analyze_query`):**
   - Detects non-SARGable functions (`YEAR(col)`, `LOWER(col)`, leading wildcards `%value`).
-  - Flags `OR` predicate index-merge hazards, inequality (`!=`) full scans, and deep `OFFSET` pagination traps.
-  - Applies the **ESR Rule** (Equality -> Sort -> Range) to formulate optimal composite indexes.
+  - Groups ESR predicates by table alias across complex `JOIN`s.
+  - Flags implicit type coercion (comparing strings with unquoted numbers) and detects AI vector distance operators (`<=>`, `<->`).
 - **Execution Plan Diagnosis (`db_explain_analyzer`):**
-  - Ingests raw `EXPLAIN` or `EXPLAIN (ANALYZE, BUFFERS)` output.
-  - Pinpoints Sequential Scans (`Seq Scan` / `type: ALL`), filesorts, and temporary disk spills (`external merge Disk`).
+  - Ingests raw text or JSON AST (`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`).
+  - Pinpoints Sequential Scans (`Seq Scan` / `type: ALL`), filesorts, temporary disk spills, Buffer Hit Ratios, and JIT compilation overhead.
 
 ---
 
 ### 5. Multi-Tenant Relational Schema Design (`db_design_schema`)
 - Converts entity specifications into standard Mermaid ER diagrams (`erDiagram`), topologically sorted migrations, and tenant isolation policies.
-- Supported Tenancy Models:
-  - `discriminator`: Shared database with `tenant_id` column + PostgreSQL RLS (`FORCE ROW LEVEL SECURITY`) or Eloquent `BelongsToTenant` global scopes.
-  - `schema`: PostgreSQL Schema-per-tenant (`SET search_path TO tenant_xxx`).
-  - `multi_database`: Dynamic tenant database connection switching.
+- Automatically synchronizes primary key conventions (`uuid`, `ulid`, `id`) with foreign key columns (`foreignUuid`, `foreignUlid`, `foreignId`).
+- Automatically converts `unique: true` columns into tenant-scoped composite unique indexes `['tenant_id', ...col]`.
 
 ---
 
-### 6. Production Maintenance & Disaster Recovery (`db_maintenance_runbook` & `db_backup_restore_runbook`)
-- **Disaster Recovery:** Use `db_backup_restore_runbook` to generate daily non-blocking logical dumps (`pg_dump`, `mysqldump`) and physical hot backups with Point-in-Time Recovery (PITR).
-- **Health Checks:** Use `db_maintenance_runbook` for dead tuple bloat, online defragmentation (`OPTIMIZE TABLE` / `pg_repack`), and replication lag monitoring.
+### 6. Connection Pooling & High-Availability (`db_tune_connection_pooler`)
+- In high-concurrency environments, PHP direct connections exhaust database connections.
+- Use `db_tune_connection_pooler` to generate:
+  - `pgbouncer.ini` (Transaction Pooling mode) for PostgreSQL.
+  - ProxySQL Read/Write splitting configuration for MySQL/MariaDB.
+
+---
+
+### 7. Data Masking & GDPR Sanitization (`db_data_masking_runbook`)
+- Use `db_data_masking_runbook` to generate production sanitization scripts before restoring customer data to staging, QA, or development environments.
+
+---
+
+### 8. Model Factories & Seeders (`db_generate_seeder_factory`)
+- Accelerates testing by generating type-safe Faker factories and multi-tenant seeders matching table columns.
+
+---
+
+### 9. High-Volume Table Partitioning (`db_partitioning_advisor`)
+- For tables exceeding 10M+ rows (ERP ledgers, audit logs, invoice items), use `db_partitioning_advisor` to generate declarative Range or List partitioning migrations and detachment runbooks.

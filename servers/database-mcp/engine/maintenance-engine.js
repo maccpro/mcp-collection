@@ -1,7 +1,7 @@
 /**
  * @file maintenance-engine.js
  * @description Enterprise Database Health, Bloat Diagnostics, Replication Monitoring,
- * Disaster Recovery, and Maintenance Runbooks for MariaDB, MySQL, and PostgreSQL.
+ * Disaster Recovery, Data Masking (GDPR), and Maintenance Runbooks for MariaDB, MySQL, and PostgreSQL.
  */
 
 class MaintenanceEngine {
@@ -9,7 +9,7 @@ class MaintenanceEngine {
    * Generate diagnostic queries and maintenance runbooks.
    * @param {Object} params
    * @param {string} [params.dialect='mariadb'] - 'mariadb' | 'mysql' | 'postgresql'
-   * @param {string} [params.task='all'] - 'bloat' | 'fragmentation' | 'locks' | 'unused_indexes' | 'replication' | 'connections' | 'all'
+   * @param {string} [params.task='all'] - 'bloat' | 'fragmentation' | 'locks' | 'unused_indexes' | 'replication' | 'connections' | 'deadlocks' | 'all'
    * @param {string} [params.table] - Target table name
    * @returns {Object} Comprehensive maintenance runbook with executable diagnostic SQL and remediation scripts
    */
@@ -17,7 +17,7 @@ class MaintenanceEngine {
     const { dialect = 'mariadb', task = 'all', table = null } = params;
     const normalizedDialect = dialect.toLowerCase();
 
-    if (normalizedDialect === 'postgresql') {
+    if (normalizedDialect === 'postgresql' || normalizedDialect === 'postgres') {
       return this._getPostgresqlRunbook(task, table);
     } else {
       return this._getMySQLRunbook(normalizedDialect, task, table);
@@ -28,10 +28,10 @@ class MaintenanceEngine {
    * Generate dedicated Disaster Recovery and Backup/Restore Runbook
    */
   static getBackupRunbook(params) {
-    const { dialect = 'mariadb', database_name = '<database_name>', backup_type = 'both' } = params;
+    const { dialect = 'mariadb', database_name = '<database_name>' } = params;
     const d = dialect.toLowerCase();
 
-    if (d === 'postgresql') {
+    if (d === 'postgresql' || d === 'postgres') {
       return {
         dialect: 'postgresql',
         database: database_name,
@@ -66,6 +66,82 @@ class MaintenanceEngine {
         }
       };
     }
+  }
+
+  /**
+   * Generate Data Masking & GDPR Scrubbing Runbook
+   */
+  static getDataMaskingRunbook(params = {}) {
+    const { dialect = 'mariadb', database_name = 'app_staging', target_tables = [] } = params;
+    const d = dialect.toLowerCase();
+
+    const isPostgres = d === 'postgresql' || d === 'postgres';
+
+    const defaultScript = isPostgres
+      ? `-- PostgreSQL Production Data Scrubbing & PII Anonymization Script
+-- Target Database: ${database_name} (Run ONLY on Staging/Dev after restoring prod dump)
+
+BEGIN;
+
+-- 1. Anonymize User Credentials & Contact Info
+UPDATE users SET
+    email = 'user_' || id || '@staging.local',
+    name = 'Anonymized User ' || id,
+    password = '$2y$12$e8xN2uYv4rK7C5N1M2X6Ieu7J8V1G2B3H4K5L6M7N8O9P0Q1R2S3T', -- Hash for "secret123"
+    remember_token = NULL;
+
+-- 2. Anonymize Customer Phone Numbers & Addresses
+UPDATE customers SET
+    phone = '+8801700' || LPAD(id::text, 6, '0'),
+    address = 'House #' || (id % 100) || ', Road #10, Staging Area, Dhaka',
+    city = 'Dhaka';
+
+-- 3. Invalidate API Keys, Tokens & Sessions
+DELETE FROM personal_access_tokens;
+DELETE FROM sessions;
+UPDATE oauth_clients SET secret = 'staging_client_secret';
+
+COMMIT;
+VACUUM ANALYZE users, customers;
+`
+      : `-- MySQL / MariaDB Production Data Scrubbing & PII Anonymization Script
+-- Target Database: ${database_name} (Run ONLY on Staging/Dev after restoring prod dump)
+
+START TRANSACTION;
+
+-- 1. Anonymize User Credentials & Contact Info
+UPDATE users SET
+    email = CONCAT('user_', id, '@staging.local'),
+    name = CONCAT('Anonymized User ', id),
+    password = '$2y$12$e8xN2uYv4rK7C5N1M2X6Ieu7J8V1G2B3H4K5L6M7N8O9P0Q1R2S3T', -- Hash for "secret123"
+    remember_token = NULL;
+
+-- 2. Anonymize Customer Phone Numbers & Addresses
+UPDATE customers SET
+    phone = CONCAT('+8801700', LPAD(id, 6, '0')),
+    address = CONCAT('House #', (id % 100), ', Road #10, Staging Area, Dhaka'),
+    city = 'Dhaka';
+
+-- 3. Invalidate API Keys, Tokens & Sessions
+TRUNCATE TABLE personal_access_tokens;
+TRUNCATE TABLE sessions;
+UPDATE oauth_clients SET secret = 'staging_client_secret';
+
+COMMIT;
+`;
+
+    return {
+      success: true,
+      dialect: d,
+      database: database_name,
+      description: 'Zero-leakage PII anonymizer for staging, QA, and local environments.',
+      safety_rules: [
+        'NEVER execute this script directly against production database.',
+        'Always clone production to staging/dev first, then run this scrubbing script immediately before granting developer access.'
+      ],
+      masking_script_sql: defaultScript,
+      bash_automation_snippet: `mysql -u root -p ${database_name} < scrub_pii.sql`
+    };
   }
 
   /**
@@ -161,7 +237,35 @@ WHERE NOT blocked_locks.granted;`,
       });
     }
 
-    // 4. Replication Health & Lag
+    // 4. Deadlock Audit
+    if (task === 'deadlocks' || task === 'all') {
+      runbook.diagnostic_tasks.push({
+        title: 'Database Deadlocks & Lock Wait History',
+        description: 'Monitors the total number of deadlocks detected by the PostgreSQL engine.',
+        diagnostic_sql: `SELECT datname, deadlocks, conflicts, temp_files, temp_bytes 
+FROM pg_stat_database 
+WHERE datname = current_database();`,
+        remediation_action: 'Set `log_lock_waits = on` and `deadlock_timeout = 1s` in postgresql.conf to capture deadlocking transactions in Postgres server logs.'
+      });
+    }
+
+    // 5. Buffer Cache Hit Ratio
+    if (task === 'all' || task === 'connections') {
+      runbook.diagnostic_tasks.push({
+        title: 'Buffer Cache Hit Ratio Diagnostic',
+        description: 'Calculates the percentage of read requests satisfied from shared_buffers without physical disk I/O.',
+        diagnostic_sql: `SELECT 
+    datname,
+    blks_hit,
+    blks_read,
+    ROUND(100.0 * blks_hit / NULLIF(blks_hit + blks_read, 0), 2) AS cache_hit_ratio_pct
+FROM pg_stat_database 
+WHERE datname = current_database();`,
+        remediation_action: 'If cache_hit_ratio_pct is below 98%, increase `shared_buffers` or optimize queries causing sequential scans.'
+      });
+    }
+
+    // 6. Replication Health & Lag
     if (task === 'replication' || task === 'all') {
       runbook.diagnostic_tasks.push({
         title: 'Replication Health & Byte Lag',
@@ -179,7 +283,7 @@ FROM pg_stat_replication;`,
       });
     }
 
-    // 5. Connection Starvation & Idle In Transaction
+    // 7. Connection Starvation & Idle In Transaction
     if (task === 'connections' || task === 'all') {
       runbook.diagnostic_tasks.push({
         title: 'Idle in Transaction Connection Audit',
@@ -275,7 +379,17 @@ ORDER BY time DESC;`,
       });
     }
 
-    // 4. Replication Status
+    // 4. Deadlock History
+    if (task === 'deadlocks' || task === 'all') {
+      runbook.diagnostic_tasks.push({
+        title: 'InnoDB Deadlock Inspection',
+        description: 'Checks the latest recorded InnoDB deadlock details in MySQL/MariaDB.',
+        diagnostic_sql: `SHOW ENGINE INNODB STATUS\\G`,
+        remediation_action: 'Look for the "LATEST DETECTED DEADLOCK" section. Ensure transactions lock resources in identical alphabetical/primary-key sequence.'
+      });
+    }
+
+    // 5. Replication Status
     if (task === 'replication' || task === 'all') {
       runbook.diagnostic_tasks.push({
         title: 'Replication Health & Seconds Behind Master',

@@ -59,6 +59,7 @@ export class QualityGate {
 
       const content = fs.readFileSync(filePath, 'utf-8');
       const relPath = path.relative(workspacePath, filePath).replace(/\\/g, '/');
+      const isTenantMigration = relPath.includes('/tenant/') || /tenant_id/i.test(content);
 
       // 1. Check for up() and down() methods
       const hasUp = /public\s+function\s+up\s*\(/i.test(content);
@@ -98,7 +99,6 @@ export class QualityGate {
 
       // 2. Check for unsafe dropColumn without reverse
       if (/\bSchema::create\b/i.test(content)) {
-        // up() creates table, verify down() has dropIfExists or drop
         if (hasDown && !/\bSchema::dropIfExists\b|\bSchema::drop\b/i.test(content)) {
           violations.push({
             file: relPath,
@@ -118,13 +118,39 @@ export class QualityGate {
           message: 'Raw CREATE INDEX statement detected without CONCURRENTLY. In PostgreSQL, this locks the table against writes.'
         });
       }
+
+      // 4. Check for CONCURRENTLY inside transaction block
+      if (/CONCURRENTLY/i.test(content) && !/withinTransaction\s*=\s*false/i.test(content)) {
+        violations.push({
+          file: relPath,
+          severity: 'CRITICAL',
+          rule: 'POSTGRES_CONCURRENT_TRANSACTION_ABORT_HAZARD',
+          message: 'Migration executes CONCURRENT DDL without declaring "public bool $withinTransaction = false;". In PostgreSQL, this causes an immediate runtime abort because concurrent statements cannot execute inside a transaction block.'
+        });
+      }
+
+      // 5. Check for un-scoped unique constraints in multi-tenant migrations
+      if (isTenantMigration) {
+        const singleUniqueMatches = [...content.matchAll(/\$table->unique\s*\(\s*(?:\[([^\]]+)\]|'([^']+)')/gi)];
+        for (const match of singleUniqueMatches) {
+          const cols = match[1] || match[2];
+          if (cols && !cols.includes('tenant_id')) {
+            violations.push({
+              file: relPath,
+              severity: 'HIGH',
+              rule: 'TENANT_UNIQUE_NAMESPACE_LEAK',
+              message: `Unique constraint '${cols}' in multi-tenant migration is not scoped by 'tenant_id'. This creates a global unique constraint causing cross-tenant namespace collisions.`
+            });
+          }
+        }
+      }
     }
 
     const isFailing = violations.some(v => v.severity === 'CRITICAL');
 
     return {
       gate_status: isFailing ? 'FAIL' : violations.length > 0 ? 'WARNING' : 'PASS',
-      decision: isFailing ? 'BLOCK_COMMIT: Critical migration violations detected.' : 'PASS: All inspected migrations are reversible.',
+      decision: isFailing ? 'BLOCK_COMMIT: Critical migration violations detected.' : 'PASS: All inspected migrations are reversible and lock-safe.',
       files_scanned: migrationFiles.length,
       violations_count: violations.length,
       violations

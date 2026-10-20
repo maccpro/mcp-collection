@@ -1,6 +1,6 @@
 /**
  * @file query-analyzer.js
- * @description Enterprise SQL Query Analyzer and Index Advisor for MariaDB, MySQL, and PostgreSQL.
+ * @description Enterprise SQL Query Analyzer and Index Advisor for MariaDB, MySQL, PostgreSQL & SQLite.
  * Analyzes SARGability, applies ESR (Equality, Sort, Range) indexing rules, and generates Eloquent optimization.
  */
 
@@ -9,7 +9,7 @@ class QueryAnalyzer {
    * Analyze SQL query for performance, SARGability, and indexing recommendations.
    * @param {Object} params
    * @param {string} params.query - Raw SQL query or Eloquent SQL dump
-   * @param {string} [params.dialect='mariadb'] - 'mariadb' | 'mysql' | 'postgresql'
+   * @param {string} [params.dialect='mariadb'] - 'mariadb' | 'mysql' | 'postgresql' | 'sqlite'
    * @param {string} [params.table] - Main table name if inferred
    * @param {Array<string>} [params.existing_indexes] - Existing table indexes
    * @returns {Object} Analysis report with recommendations and Eloquent rewriter
@@ -27,14 +27,15 @@ class QueryAnalyzer {
       range: []
     };
 
-    // 1. Detect Table Name if not passed
+    // 1. Detect Table Name & Aliases if not passed
+    const tableAliases = this._extractTableAliases(cleanQuery);
     const detectedTable = table || this._detectTable(cleanQuery);
 
     // 2. Check SARGability Anti-Patterns
     this._checkSargability(cleanQuery, normalizedDialect, issues, recommendations);
 
     // 3. Extract ESR (Equality, Sort, Range) predicates
-    this._extractESRPredicates(cleanQuery, esrColumns);
+    const multiTableEsr = this._extractESRPredicates(cleanQuery, esrColumns, tableAliases, detectedTable);
 
     // 4. Formulate Composite Index Recommendation based on ESR rule
     const indexRecommendation = this._buildIndexRecommendation(detectedTable, esrColumns, normalizedDialect, existing_indexes);
@@ -55,9 +56,34 @@ class QueryAnalyzer {
         range_columns: Array.from(new Set(esrColumns.range))
       },
       recommended_index: indexRecommendation,
+      joined_table_indexes: multiTableEsr,
       eloquent_rewriter: eloquentRewriter,
       recommendations
     };
+  }
+
+  /**
+   * Extract table alias mapping from query
+   */
+  static _extractTableAliases(sql) {
+    const aliases = new Map();
+    const fromMatch = sql.match(/\bFROM\s+[`"']?([a-zA-Z0-9_]+)[`"']?(?:\s+(?:AS\s+)?([a-zA-Z0-9_]+))?/i);
+    if (fromMatch && fromMatch[1]) {
+      const tbl = fromMatch[1];
+      const alias = fromMatch[2] || tbl;
+      aliases.set(alias.toLowerCase(), tbl);
+      aliases.set(tbl.toLowerCase(), tbl);
+    }
+
+    const joinRegex = /\b(?:LEFT|RIGHT|INNER|CROSS|OUTER)?\s*JOIN\s+[`"']?([a-zA-Z0-9_]+)[`"']?(?:\s+(?:AS\s+)?([a-zA-Z0-9_]+))?/gi;
+    let jm;
+    while ((jm = joinRegex.exec(sql)) !== null) {
+      const tbl = jm[1];
+      const alias = jm[2] || tbl;
+      aliases.set(alias.toLowerCase(), tbl);
+      aliases.set(tbl.toLowerCase(), tbl);
+    }
+    return aliases;
   }
 
   /**
@@ -233,7 +259,37 @@ class QueryAnalyzer {
       }
     }
 
-    // Anti-pattern 10: GROUP BY and ORDER BY Mismatch
+    // Anti-pattern 10: Implicit Type Coercion
+    const coercionRegex = /[`"']?([a-zA-Z0-9_]*(?:phone|code|sku|mobile|ssn|uuid|ident|account_no)[a-zA-Z0-9_]*)[`"']?\s*=\s*(\d+)(?!\.|\w|['"])/i;
+    const coercionMatch = sql.match(coercionRegex);
+    if (coercionMatch) {
+      issues.push({
+        type: 'IMPLICIT_TYPE_COERCION_HAZARD',
+        severity: 'HIGH',
+        column: coercionMatch[1],
+        literal: coercionMatch[2],
+        description: `Comparing string/identifier column '${coercionMatch[1]}' with numeric literal '${coercionMatch[2]}' causes MySQL/PostgreSQL to cast the entire column on every row, invalidating indexes.`
+      });
+      recommendations.push({
+        category: 'SARGABILITY_FIX',
+        action: `Quote parameter value as a string: '${coercionMatch[1]} = \\'${coercionMatch[2]}\\''.`
+      });
+    }
+
+    // Anti-pattern 11: Vector Similarity Search Operator
+    if (/<=>|<->|<#>/.test(sql)) {
+      issues.push({
+        type: 'VECTOR_SIMILARITY_SEARCH_DETECTED',
+        severity: 'MEDIUM',
+        description: 'Vector similarity distance operator detected in query. B-Tree indexes cannot accelerate vector searches.'
+      });
+      recommendations.push({
+        category: 'AI_VECTOR_INDEX_RECOMMENDATION',
+        action: 'In PostgreSQL (pgvector), create an HNSW or IVFFlat index: `CREATE INDEX idx_vector ON table USING hnsw (embedding vector_cosine_ops);`'
+      });
+    }
+
+    // Anti-pattern 12: GROUP BY and ORDER BY Mismatch
     const groupMatch = sql.match(/\bGROUP\s+BY\s+(.*?)(?:\bHAVING\b|\bORDER\s+BY\b|\bLIMIT\b|$)/i);
     const orderMatch = sql.match(/\bORDER\s+BY\s+(.*?)(?:\bLIMIT\b|$)/i);
     if (groupMatch && orderMatch) {
@@ -256,39 +312,66 @@ class QueryAnalyzer {
   }
 
   /**
-   * Extract ESR (Equality, Sort, Range) columns from WHERE and ORDER BY
+   * Extract ESR predicates with alias awareness
    */
-  static _extractESRPredicates(sql, esr) {
+  static _extractESRPredicates(sql, mainEsr, aliases, mainTable) {
+    const tablePredicates = {};
+
+    const getTableForAlias = (alias) => {
+      if (!alias) return mainTable;
+      const lower = alias.toLowerCase();
+      return aliases.get(lower) || lower;
+    };
+
+    const initTableEsr = (tbl) => {
+      if (!tablePredicates[tbl]) {
+        tablePredicates[tbl] = { equality: [], sort: [], range: [] };
+      }
+      return tablePredicates[tbl];
+    };
+
     const whereMatch = sql.match(/\bWHERE\b(.*?)(?:\bORDER\s+BY\b|\bGROUP\s+BY\b|\bLIMIT\b|$)/i);
     if (whereMatch && whereMatch[1]) {
       const whereClause = whereMatch[1];
 
-      // Extract Equality: col = val, col IS NULL
+      // Extract Equality: [table.]col = val, [table.]col IS NULL
       const equalityRegex = /(?:[`"']?([a-zA-Z0-9_]+)[`"']?\.)?[`"']?([a-zA-Z0-9_]+)[`"']?\s*(?:=|IS\s+NULL)\s*[^<>=]/gi;
       let eq;
       while ((eq = equalityRegex.exec(whereClause)) !== null) {
-        // Strip table alias prefix (e.g. o.status -> status)
-        const col = eq[2] || eq[1];
+        const prefix = eq[1];
+        const col = eq[2];
         if (col && !['and', 'or', 'where', 'not', 'null'].includes(col.toLowerCase())) {
-          esr.equality.push(col.toLowerCase());
+          const targetTbl = getTableForAlias(prefix);
+          const tEsr = initTableEsr(targetTbl);
+          tEsr.equality.push(col.toLowerCase());
+          if (targetTbl === mainTable || !prefix) {
+            mainEsr.equality.push(col.toLowerCase());
+          }
         }
       }
 
-      // Extract Range: col > val, col < val, col >= val, col <= val, col BETWEEN, col LIKE 'prefix%'
+      // Extract Range: [table.]col > val, etc.
       const rangeRegex = /(?:[`"']?([a-zA-Z0-9_]+)[`"']?\.)?[`"']?([a-zA-Z0-9_]+)[`"']?\s*(?:>|<|>=|<=|BETWEEN|IN\s*\(|LIKE\s+['"][^%])/gi;
       let rg;
       while ((rg = rangeRegex.exec(whereClause)) !== null) {
-        const col = rg[2] || rg[1];
+        const prefix = rg[1];
+        const col = rg[2];
         if (col && !['and', 'or', 'where', 'not'].includes(col.toLowerCase())) {
-          // If already in equality, don't duplicate as range
-          if (!esr.equality.includes(col.toLowerCase())) {
-            esr.range.push(col.toLowerCase());
+          const targetTbl = getTableForAlias(prefix);
+          const tEsr = initTableEsr(targetTbl);
+          if (!tEsr.equality.includes(col.toLowerCase())) {
+            tEsr.range.push(col.toLowerCase());
+          }
+          if (targetTbl === mainTable || !prefix) {
+            if (!mainEsr.equality.includes(col.toLowerCase())) {
+              mainEsr.range.push(col.toLowerCase());
+            }
           }
         }
       }
     }
 
-    // Extract Sort: ORDER BY col1 [ASC|DESC], col2
+    // Extract Sort: ORDER BY [table.]col1 [ASC|DESC], ...
     const orderMatch = sql.match(/\bORDER\s+BY\s+(.*?)(?:\bLIMIT\b|$)/i);
     if (orderMatch && orderMatch[1]) {
       const orderClause = orderMatch[1];
@@ -296,13 +379,40 @@ class QueryAnalyzer {
       for (const part of orderParts) {
         const colMatch = part.trim().match(/(?:[`"']?([a-zA-Z0-9_]+)[`"']?\.)?[`"']?([a-zA-Z0-9_]+)[`"']?(?:\s+(?:ASC|DESC))?/i);
         if (colMatch) {
-          const col = colMatch[2] || colMatch[1];
+          const prefix = colMatch[1];
+          const col = colMatch[2];
           if (col && !['and', 'or'].includes(col.toLowerCase())) {
-            esr.sort.push(col.toLowerCase());
+            const targetTbl = getTableForAlias(prefix);
+            const tEsr = initTableEsr(targetTbl);
+            tEsr.sort.push(col.toLowerCase());
+            if (targetTbl === mainTable || !prefix) {
+              mainEsr.sort.push(col.toLowerCase());
+            }
           }
         }
       }
     }
+
+    // Generate joined table indexes (excluding main table)
+    const joinedRecommendations = [];
+    for (const [tbl, esr] of Object.entries(tablePredicates)) {
+      if (tbl !== mainTable) {
+        const eq = Array.from(new Set(esr.equality));
+        const st = Array.from(new Set(esr.sort)).filter(c => !eq.includes(c));
+        const rg = Array.from(new Set(esr.range)).filter(c => !eq.includes(c) && !st.includes(c));
+        const cols = [...eq, ...st, ...rg];
+        if (cols.length > 0) {
+          joinedRecommendations.push({
+            table: tbl,
+            index_name: `idx_${tbl}_${cols.slice(0, 3).join('_')}`,
+            columns: cols,
+            rule_applied: 'ESR (Equality -> Sort -> Range)'
+          });
+        }
+      }
+    }
+
+    return joinedRecommendations;
   }
 
   /**
@@ -338,12 +448,14 @@ class QueryAnalyzer {
     let migrationUpCode = `$table->index([${columnsArrayString}], '${indexName}');`;
     let migrationDownCode = `$table->dropIndex('${indexName}');`;
 
-    // PostgreSQL Concurrent Index snippet for zero downtime
     let rawSqlSnippets = {};
     if (dialect === 'postgresql') {
       rawSqlSnippets.postgresql = `CREATE INDEX CONCURRENTLY IF NOT EXISTS ${indexName} ON ${table} (${optimalColumns.join(', ')});`;
       rawSqlSnippets.laravel_raw = `DB::statement('CREATE INDEX CONCURRENTLY IF NOT EXISTS ${indexName} ON ${table} (${optimalColumns.join(', ')})');`;
-    } else if (dialect === 'mariadb' || dialect === 'mysql') {
+    } else if (dialect === 'sqlite') {
+      rawSqlSnippets.sqlite = `CREATE INDEX IF NOT EXISTS ${indexName} ON ${table} (${optimalColumns.join(', ')});`;
+      rawSqlSnippets.laravel_raw = `DB::statement('CREATE INDEX IF NOT EXISTS ${indexName} ON ${table} (${optimalColumns.join(', ')})');`;
+    } else {
       rawSqlSnippets.online_ddl = `ALTER TABLE ${table} ADD INDEX ${indexName} (${optimalColumns.join(', ')}), ALGORITHM=INPLACE, LOCK=NONE;`;
     }
 

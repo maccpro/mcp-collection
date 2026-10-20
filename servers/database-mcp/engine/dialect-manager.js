@@ -1,10 +1,10 @@
 /**
  * Enterprise Database Dialect Manager
- * Deep dialect specifications, data-type mapping, and indexing mechanics for MariaDB, MySQL & PostgreSQL.
+ * Deep dialect specifications, data-type mapping, and indexing mechanics for MariaDB, MySQL, PostgreSQL & SQLite.
  */
 
 export class DialectManager {
-  static SUPPORTED_DIALECTS = ['mariadb', 'mysql', 'postgresql'];
+  static SUPPORTED_DIALECTS = ['mariadb', 'mysql', 'postgresql', 'sqlite'];
 
   /**
    * Normalize input dialect string
@@ -12,6 +12,7 @@ export class DialectManager {
   static normalize(dialect = 'mariadb') {
     const d = String(dialect).toLowerCase().trim();
     if (d === 'postgresql' || d === 'postgres' || d === 'pgsql') return 'postgresql';
+    if (d === 'sqlite' || d === 'sqlite3') return 'sqlite';
     if (d === 'mariadb') return 'mariadb';
     if (d === 'mysql') return 'mysql';
     return 'mariadb';
@@ -44,6 +45,10 @@ export class DialectManager {
           return options.primary 
             ? `$table->uuid(${colName})->primary();` 
             : `$table->uuid(${colName});`;
+        } else if (d === 'sqlite') {
+          return options.primary
+            ? `$table->uuid(${colName})->primary();`
+            : `$table->uuid(${colName});`;
         } else {
           // MySQL 8+ best practice for B-Tree clustered index: binary(16) or uuid string
           return options.binary 
@@ -56,6 +61,57 @@ export class DialectManager {
         return options.primary
           ? `$table->ulid(${colName})->primary();`
           : `$table->ulid(${colName});`;
+
+      case 'foreign_uuid':
+      case 'foreignuuid':
+        return options.nullable
+          ? `$table->foreignUuid(${colName})->nullable();`
+          : `$table->foreignUuid(${colName});`;
+
+      case 'foreign_ulid':
+      case 'foreignulid':
+        return options.nullable
+          ? `$table->foreignUlid(${colName})->nullable();`
+          : `$table->foreignUlid(${colName});`;
+
+      case 'vector':
+      case 'embedding': {
+        const dimensions = options.dimensions || options.dims || 1536;
+        if (d === 'postgresql') {
+          method += `vector(${colName}, ${dimensions})`;
+        } else {
+          method += `json(${colName})`; // Fallback for SQLite/MySQL/MariaDB
+        }
+        break;
+      }
+
+      // Polymorphic Relations
+      case 'morphs':
+        return `$table->morphs(${colName});`;
+
+      case 'nullablemorphs':
+        return `$table->nullableMorphs(${colName});`;
+
+      case 'uuidmorphs':
+        return `$table->uuidMorphs(${colName});`;
+
+      case 'nullableuuidmorphs':
+        return `$table->nullableUuidMorphs(${colName});`;
+
+      case 'ulidmorphs':
+        return `$table->ulidMorphs(${colName});`;
+
+      case 'nullableulidmorphs':
+        return `$table->nullableUlidMorphs(${colName});`;
+
+      case 'remembertoken':
+        return `$table->rememberToken();`;
+
+      case 'softdeletes':
+        return d === 'postgresql' ? `$table->softDeletesTz();` : `$table->softDeletes();`;
+
+      case 'timestamps':
+        return d === 'postgresql' ? `$table->timestampsTz();` : `$table->timestamps();`;
 
       case 'string':
       case 'varchar': {
@@ -75,11 +131,11 @@ export class DialectManager {
         break;
 
       case 'mediumtext':
-        method += (d === 'postgresql') ? `text(${colName})` : `mediumText(${colName})`;
+        method += (d === 'postgresql' || d === 'sqlite') ? `text(${colName})` : `mediumText(${colName})`;
         break;
 
       case 'longtext':
-        method += (d === 'postgresql') ? `text(${colName})` : `longText(${colName})`;
+        method += (d === 'postgresql' || d === 'sqlite') ? `text(${colName})` : `longText(${colName})`;
         break;
 
       case 'tinyint':
@@ -111,6 +167,11 @@ export class DialectManager {
       case 'unsignedbiginteger':
       case 'foreign_id':
       case 'foreignid':
+        if (options.pk_type === 'uuid') {
+          return options.nullable ? `$table->foreignUuid(${colName})->nullable();` : `$table->foreignUuid(${colName});`;
+        } else if (options.pk_type === 'ulid') {
+          return options.nullable ? `$table->foreignUlid(${colName})->nullable();` : `$table->foreignUlid(${colName});`;
+        }
         method += `unsignedBigInteger(${colName})`;
         break;
 
@@ -137,6 +198,13 @@ export class DialectManager {
         break;
       }
 
+      case 'unsigneddecimal': {
+        const precision = options.precision || options.total || 15;
+        const scale = options.scale || options.places || 4;
+        method += `unsignedDecimal(${colName}, ${precision}, ${scale})`;
+        break;
+      }
+
       case 'boolean':
       case 'bool':
         method += `boolean(${colName})`;
@@ -152,7 +220,7 @@ export class DialectManager {
       case 'set': {
         const values = Array.isArray(options.values) ? options.values : ['read', 'write'];
         const valsStr = values.map(v => `'${v}'`).join(', ');
-        method += (d === 'postgresql') ? `jsonb(${colName})` : `set(${colName}, [${valsStr}])`;
+        method += (d === 'postgresql' || d === 'sqlite') ? `jsonb(${colName})` : `set(${colName}, [${valsStr}])`;
         break;
       }
 
@@ -161,7 +229,7 @@ export class DialectManager {
         if (d === 'postgresql') {
           method += `jsonb(${colName})`; // Native indexed binary JSON
         } else {
-          method += `json(${colName})`; // MySQL binary JSON or MariaDB LONGTEXT+JSON_VALID
+          method += `json(${colName})`; // MySQL binary JSON or MariaDB LONGTEXT+JSON_VALID or SQLite JSON
         }
         break;
 
@@ -174,7 +242,7 @@ export class DialectManager {
         break;
 
       case 'year':
-        method += (d === 'postgresql') ? `smallInteger(${colName})` : `year(${colName})`;
+        method += (d === 'postgresql' || d === 'sqlite') ? `smallInteger(${colName})` : `year(${colName})`;
         break;
 
       case 'timestamp':
@@ -195,11 +263,7 @@ export class DialectManager {
 
       case 'ip':
       case 'ipaddress':
-        if (d === 'postgresql') {
-          method += `ipAddress(${colName})`; // Maps to native inet in PostgreSQL
-        } else {
-          method += `ipAddress(${colName})`; // varchar(45) in MySQL/MariaDB
-        }
+        method += `ipAddress(${colName})`;
         break;
 
       case 'mac':
@@ -233,7 +297,7 @@ export class DialectManager {
       method += '->useCurrent()';
     }
     if (options.use_current_on_update || options.usecurrentonupdate) {
-      if (d !== 'postgresql') {
+      if (d === 'mysql' || d === 'mariadb') {
         method += '->useCurrentOnUpdate()';
       }
     }
@@ -250,9 +314,15 @@ export class DialectManager {
     if (options.index && !options.unique) method += '->index()';
     
     // Position modifiers (MySQL/MariaDB only)
-    if (d !== 'postgresql') {
+    if (d === 'mysql' || d === 'mariadb') {
       if (options.after) method += `->after('${options.after}')`;
       if (options.first) method += '->first()';
+      if (options.invisible) method += '->invisible()';
+    }
+
+    // Check constraint
+    if (options.check) {
+      method += `->check('${options.check}')`;
     }
 
     // Generated columns
@@ -275,7 +345,13 @@ export class DialectManager {
     if (d === 'postgresql') {
       return {
         strategy: 'CREATE INDEX CONCURRENTLY',
-        laravel_note: 'In PostgreSQL, execute outside a transaction using DB::statement("CREATE INDEX CONCURRENTLY ...") to avoid table locks.'
+        laravel_note: 'In PostgreSQL, execute outside a transaction using DB::statement("CREATE INDEX CONCURRENTLY ...") and set public bool $withinTransaction = false; to avoid table locks.'
+      };
+    }
+    if (d === 'sqlite') {
+      return {
+        strategy: 'CREATE INDEX',
+        laravel_note: 'SQLite creates indexes instantly under database file or WAL lock.'
       };
     }
     return {
@@ -284,3 +360,5 @@ export class DialectManager {
     };
   }
 }
+
+export default DialectManager;

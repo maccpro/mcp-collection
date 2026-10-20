@@ -1,6 +1,6 @@
 /**
  * @file schema-modeler.js
- * @description Enterprise Multi-Tenant & Relational Schema Modeler for MariaDB, MySQL, and PostgreSQL.
+ * @description Enterprise Multi-Tenant & Relational Schema Modeler for MariaDB, MySQL, PostgreSQL & SQLite.
  * Generates Mermaid ER diagrams, reversible Laravel migrations, and PostgreSQL RLS / SaaS tenant policies.
  */
 
@@ -12,7 +12,7 @@ class SchemaModeler {
    * @param {Object} params
    * @param {string} params.project_name
    * @param {Array<Object>} params.tables - Table definitions
-   * @param {string} [params.dialect='mariadb'] - 'mariadb' | 'mysql' | 'postgresql'
+   * @param {string} [params.dialect='mariadb'] - 'mariadb' | 'mysql' | 'postgresql' | 'sqlite'
    * @param {string} [params.tenancy_mode='discriminator'] - 'discriminator' | 'schema' | 'multi_database' | 'single_tenant'
    * @param {string} [params.primary_key_type='id'] - 'id' | 'uuid' | 'ulid'
    * @returns {Object} Schema model with Mermaid ER diagram, ordered migrations, and tenant isolation policies
@@ -32,7 +32,7 @@ class SchemaModeler {
     const enrichedTables = this._enrichForTenancy(tables, tenancy_mode, primary_key_type);
 
     // 2. Generate Mermaid ER Diagram
-    const mermaidErDiagram = this._generateMermaidER(enrichedTables);
+    const mermaidErDiagram = this._generateMermaidER(enrichedTables, primary_key_type);
 
     // 3. Generate Reversible Laravel Migrations in dependency order
     const orderedMigrations = this._generateOrderedMigrations(enrichedTables, normalizedDialect, tenancy_mode, primary_key_type);
@@ -70,6 +70,7 @@ class SchemaModeler {
         enriched.unshift({
           name: 'tenants',
           description: 'Tenant organization accounts',
+          primary_key_type: pkType,
           columns: [
             { name: 'name', type: 'string', length: 150 },
             { name: 'slug', type: 'string', length: 100, unique: true },
@@ -90,9 +91,10 @@ class SchemaModeler {
 
         const hasTenantCol = t.columns.some(c => c.name === 'tenant_id');
         if (!hasTenantCol) {
+          const tenantFkType = pkType === 'uuid' ? 'foreign_uuid' : (pkType === 'ulid' ? 'foreign_ulid' : 'foreign_id');
           t.columns.unshift({
             name: 'tenant_id',
-            type: pkType === 'uuid' ? 'uuid' : 'foreign_id',
+            type: tenantFkType,
             index: true,
             nullable: false
           });
@@ -118,13 +120,20 @@ class SchemaModeler {
   /**
    * Generate Mermaid ER diagram compliant with Mermaid standard
    */
-  static _generateMermaidER(tables) {
+  static _generateMermaidER(tables, pkType = 'id') {
     let mermaid = 'erDiagram\n';
 
     // Entities and attributes
     for (const table of tables) {
       mermaid += `    ${table.name} {\n`;
-      mermaid += `        bigint id PK\n`;
+      if (Array.isArray(table.primary_key)) {
+        for (const pk of table.primary_key) {
+          mermaid += `        bigint ${pk} PK\n`;
+        }
+      } else {
+        const pkDataType = pkType === 'uuid' ? 'uuid' : (pkType === 'ulid' ? 'string' : 'bigint');
+        mermaid += `        ${pkDataType} id PK\n`;
+      }
 
       for (const col of table.columns || []) {
         const colType = col.type || 'string';
@@ -179,13 +188,15 @@ class SchemaModeler {
 
     for (const table of sortedTables) {
       const scope = (tenancyMode === 'multi_database' && table.name !== 'tenants') ? 'tenant' : 'standard';
+      const isTableTenantScoped = tenancyMode === 'discriminator' && table.name !== 'tenants' && !table.is_global;
 
       const migration = MigrationEngine.generate({
         operation: 'create_table',
         table: table.name,
         dialect,
         scope,
-        primary_key_type: pkType,
+        primary_key_type: table.primary_key || pkType,
+        include_tenant_id: isTableTenantScoped,
         columns: table.columns || [],
         foreign_keys: table.foreign_keys || []
       });
@@ -297,7 +308,7 @@ CREATE POLICY tenant_isolation_policy ON ${t.name}
       };
     }
 
-    // MariaDB / MySQL: Eloquent Global Scope Trait
+    // MariaDB / MySQL / SQLite: Eloquent Global Scope Trait
     const eloquentTrait = `<?php
 
 namespace App\\Models\\Concerns;

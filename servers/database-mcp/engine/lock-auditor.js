@@ -1,6 +1,6 @@
 /**
  * @file lock-auditor.js
- * @description Zero-Downtime Migration Lock Risk Auditor for MariaDB, MySQL, and PostgreSQL.
+ * @description Zero-Downtime Migration Lock Risk Auditor for MariaDB, MySQL, PostgreSQL & SQLite.
  * Analyzes DDL operations for table lock risks, metadata lock (MDL) queues, AccessExclusiveLock,
  * and provides safe zero-downtime execution recipes.
  */
@@ -10,8 +10,8 @@ class LockAuditor {
    * Audit migration operations for locking risks and zero-downtime compliance.
    * @param {Object} params
    * @param {string} params.table - Table name being altered
-   * @param {Array<Object>} params.operations - List of migration operations (add_column, drop_column, change_column, add_index, add_foreign_key, etc.)
-   * @param {string} [params.dialect='mariadb'] - 'mariadb' | 'mysql' | 'postgresql'
+   * @param {Array<Object>} params.operations - List of migration operations
+   * @param {string} [params.dialect='mariadb'] - 'mariadb' | 'mysql' | 'postgresql' | 'sqlite'
    * @param {number} [params.estimated_rows=100000] - Estimated row count
    * @returns {Object} Comprehensive lock audit report
    */
@@ -61,6 +61,13 @@ class LockAuditor {
                 description: 'Constant defaults in PostgreSQL 11+ are stored in catalog metadata without rewriting rows.'
               });
             }
+          } else if (normalizedDialect === 'sqlite') {
+            hazards.push({
+              operation: `ADD COLUMN ${colName}`,
+              risk_level: 'LOW',
+              lock_type: 'File-level write lock',
+              description: 'SQLite handles ADD COLUMN as a metadata operation unless default is non-constant.'
+            });
           } else {
             // MySQL / MariaDB
             if (isNotNull && hasDefault && normalizedDialect === 'mysql' && estimated_rows > 500000) {
@@ -118,7 +125,7 @@ class LockAuditor {
                 risk_level: 'HIGH',
                 lock_type: 'ShareLock',
                 description: 'Creating index without CONCURRENTLY blocks all concurrent write operations (INSERT, UPDATE, DELETE) until index build completes.',
-                mitigation: 'Always use CREATE INDEX CONCURRENTLY in PostgreSQL for online migrations.'
+                mitigation: 'Always use CREATE INDEX CONCURRENTLY in PostgreSQL for online migrations and set public bool $withinTransaction = false; in migration class.'
               });
               highestRisk = this._escalateRisk(highestRisk, 'HIGH');
             } else {
@@ -129,6 +136,13 @@ class LockAuditor {
                 description: 'Safe for zero-downtime. Does not block reads or writes. Note: Cannot run inside a transaction block.'
               });
             }
+          } else if (normalizedDialect === 'sqlite') {
+            hazards.push({
+              operation: `CREATE INDEX on ${colName}`,
+              risk_level: 'LOW',
+              lock_type: 'Database lock',
+              description: 'SQLite index creation builds quickly but locks the database file during the build.'
+            });
           } else {
             // MariaDB / MySQL
             hazards.push({
@@ -136,6 +150,37 @@ class LockAuditor {
               risk_level: 'LOW',
               lock_type: 'ALGORITHM=INPLACE, LOCK=NONE',
               description: 'MariaDB and MySQL support online DDL for secondary index creation without blocking DML.'
+            });
+          }
+          break;
+        }
+
+        case 'drop_index': {
+          if (normalizedDialect === 'postgresql') {
+            const hasConcurrent = op.concurrent !== false;
+            if (!hasConcurrent) {
+              hazards.push({
+                operation: `DROP INDEX on ${colName}`,
+                risk_level: 'HIGH',
+                lock_type: 'AccessExclusiveLock',
+                description: 'Dropping index without CONCURRENTLY acquires AccessExclusiveLock, blocking concurrent reads and writes.',
+                mitigation: 'Use DROP INDEX CONCURRENTLY in PostgreSQL.'
+              });
+              highestRisk = this._escalateRisk(highestRisk, 'HIGH');
+            } else {
+              hazards.push({
+                operation: `DROP INDEX CONCURRENTLY on ${colName}`,
+                risk_level: 'LOW',
+                lock_type: 'ShareUpdateExclusiveLock',
+                description: 'Safe for zero-downtime concurrent dropping.'
+              });
+            }
+          } else {
+            hazards.push({
+              operation: `DROP INDEX on ${colName}`,
+              risk_level: 'LOW',
+              lock_type: 'ALGORITHM=INPLACE',
+              description: 'Online index removal.'
             });
           }
           break;
@@ -160,6 +205,27 @@ class LockAuditor {
               mitigation: 'Run during off-peak hours or set lock_wait_timeout = 5 to avoid cascading connection pileups.'
             });
             highestRisk = this._escalateRisk(highestRisk, 'HIGH');
+          }
+          break;
+        }
+
+        case 'add_check_constraint': {
+          if (normalizedDialect === 'postgresql') {
+            hazards.push({
+              operation: `ADD CHECK CONSTRAINT on ${colName}`,
+              risk_level: 'HIGH',
+              lock_type: 'AccessExclusiveLock',
+              description: 'Adding a CHECK constraint without NOT VALID performs a full table scan under AccessExclusiveLock.',
+              mitigation: 'Add constraint as NOT VALID, then run ALTER TABLE ... VALIDATE CONSTRAINT.'
+            });
+            highestRisk = this._escalateRisk(highestRisk, 'HIGH');
+          } else {
+            hazards.push({
+              operation: `ADD CHECK CONSTRAINT on ${colName}`,
+              risk_level: 'LOW',
+              lock_type: 'Metadata operation',
+              description: 'Check constraints are checked on subsequent inserts and updates.'
+            });
           }
           break;
         }
@@ -194,7 +260,7 @@ class LockAuditor {
       safeRecipeSteps.push('2. If migrating large tables (>1M rows), avoid transactions that hold DDL locks while doing data backfills.');
       if (normalizedDialect === 'postgresql') {
         safeRecipeSteps.push('3. For zero-downtime online schema changes on massive tables, consider `pg-roll` (github.com/xataio/pg-roll).');
-      } else {
+      } else if (normalizedDialect !== 'sqlite') {
         safeRecipeSteps.push(`3. For tables over 5M rows, use triggerless online DDL tools:\n   gh-ost --user="app" --password="..." --host="127.0.0.1" --database="db" --table="${table}" --alter="..." --execute`);
       }
     } else {

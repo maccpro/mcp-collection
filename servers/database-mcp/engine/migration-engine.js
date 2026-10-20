@@ -3,6 +3,7 @@ import { DialectManager } from './dialect-manager.js';
 /**
  * Enterprise Laravel Reversible Migration Generator
  * Generates production-ready, reversible Laravel Anonymous Migrations for Standard & Multi-Tenant Scopes.
+ * Supports PostgreSQL, MariaDB, MySQL & SQLite.
  */
 export class MigrationEngine {
   /**
@@ -22,18 +23,20 @@ export class MigrationEngine {
     const operation = (params.operation || 'create_table').toLowerCase().trim();
     const dialect = DialectManager.normalize(params.database_type || params.dialect || 'mariadb');
     const scope = (params.scope || 'standard').toLowerCase().trim();
-    const isTenant = scope === 'tenant' || params.is_tenant === true;
+    const isTenant = scope === 'tenant' || params.is_tenant === true || params.include_tenant_id === true;
     const pkType = params.primary_key || params.primary_key_type || 'id';
 
     const columns = params.columns || [];
     const indexes = params.indexes || [];
     const foreignKeys = params.foreign_keys || [];
+    const checkConstraints = params.check_constraints || [];
     const timestamps = params.timestamps !== false;
     const softDeletes = params.soft_deletes === true;
 
     let upBody = '';
     let downBody = '';
     let description = '';
+    let requiresNoTransaction = false;
 
     const timestampPrefix = this.formatTimestamp();
     const filename = `${timestampPrefix}_${operation}_${tableName}.php`;
@@ -44,30 +47,58 @@ export class MigrationEngine {
       case 'create_table': {
         description = `Create table '${tableName}' (${dialect.toUpperCase()} - ${isTenant ? 'Tenant' : 'Standard'} Scope)`;
         const lines = [];
+        const tenantScopedUniqueCols = [];
 
         // Primary Key handling
-        if (pkType === 'uuid') {
+        if (Array.isArray(pkType)) {
+          const pkCols = pkType.map(c => `'${c}'`).join(', ');
+          lines.push(`$table->primary([${pkCols}]);`);
+        } else if (pkType === 'uuid') {
           lines.push(DialectManager.mapLaravelColumn('uuid', 'id', { primary: true }, dialect));
         } else if (pkType === 'ulid') {
           lines.push(DialectManager.mapLaravelColumn('ulid', 'id', { primary: true }, dialect));
-        } else {
+        } else if (pkType === 'composite' && Array.isArray(params.primary_key_columns)) {
+          const pkCols = params.primary_key_columns.map(c => `'${c}'`).join(', ');
+          lines.push(`$table->primary([${pkCols}]);`);
+        } else if (pkType !== 'none') {
           lines.push('$table->id();');
         }
 
         // Tenant ID if tenant table in single-database tenancy
         if (params.include_tenant_id) {
-          lines.push('$table->unsignedBigInteger(\'tenant_id\')->index();');
+          if (pkType === 'uuid') {
+            lines.push(DialectManager.mapLaravelColumn('foreign_uuid', 'tenant_id', { index: true }, dialect));
+          } else if (pkType === 'ulid') {
+            lines.push(DialectManager.mapLaravelColumn('foreign_ulid', 'tenant_id', { index: true }, dialect));
+          } else {
+            lines.push('$table->unsignedBigInteger(\'tenant_id\')->index();');
+          }
         }
 
         // Custom columns
         for (const col of columns) {
-          lines.push(DialectManager.mapLaravelColumn(col.type || 'string', col.name, col, dialect));
+          const colOpts = { ...col };
+          // If in multi-tenant discriminator scope and column is unique, scope it with tenant_id rather than global unique
+          if (params.include_tenant_id && colOpts.unique) {
+            delete colOpts.unique;
+            tenantScopedUniqueCols.push(col.name);
+          }
+          lines.push(DialectManager.mapLaravelColumn(col.type || 'string', col.name, colOpts, dialect));
+        }
+
+        // Multi-tenant scoped composite unique indexes
+        for (const uCol of tenantScopedUniqueCols) {
+          lines.push(`$table->unique(['tenant_id', '${uCol}']); // Scoped to tenant to prevent cross-tenant collision`);
         }
 
         // Indexes
         for (const idx of indexes) {
           if (Array.isArray(idx.columns)) {
-            const colsStr = idx.columns.map(c => `'${c}'`).join(', ');
+            let cols = idx.columns;
+            if (params.include_tenant_id && idx.type === 'unique' && !cols.includes('tenant_id')) {
+              cols = ['tenant_id', ...cols];
+            }
+            const colsStr = cols.map(c => `'${c}'`).join(', ');
             const idxName = idx.name ? `, '${idx.name}'` : '';
             if (idx.type === 'unique') {
               lines.push(`$table->unique([${colsStr}]${idxName});`);
@@ -79,6 +110,13 @@ export class MigrationEngine {
               lines.push(`$table->index([${colsStr}]${idxName});`);
             }
           }
+        }
+
+        // Check constraints
+        for (const chk of checkConstraints) {
+          const expr = typeof chk === 'string' ? chk : chk.expression;
+          const chkName = typeof chk === 'object' && chk.name ? `, '${chk.name}'` : '';
+          lines.push(`$table->check('${expr}'${chkName});`);
         }
 
         // Foreign Keys
@@ -112,6 +150,29 @@ export class MigrationEngine {
         const indentedLines = lines.map(l => `            ${l}`).join('\n');
         upBody = `        Schema::create('${tableName}', function (Blueprint $table) {\n${indentedLines}\n        });`;
         downBody = `        Schema::dropIfExists('${tableName}');`;
+        break;
+      }
+
+      case 'drop_table': {
+        description = `Drop table '${tableName}' with reversible schema restoration`;
+        // Build restore lines for down()
+        const restoreLines = [];
+        if (pkType === 'uuid') {
+          restoreLines.push(DialectManager.mapLaravelColumn('uuid', 'id', { primary: true }, dialect));
+        } else if (pkType === 'ulid') {
+          restoreLines.push(DialectManager.mapLaravelColumn('ulid', 'id', { primary: true }, dialect));
+        } else {
+          restoreLines.push('$table->id();');
+        }
+        for (const col of columns) {
+          restoreLines.push(DialectManager.mapLaravelColumn(col.type || 'string', col.name, col, dialect));
+        }
+        if (timestamps) {
+          restoreLines.push(dialect === 'postgresql' ? '$table->timestampsTz();' : '$table->timestamps();');
+        }
+
+        upBody = `        Schema::dropIfExists('${tableName}');`;
+        downBody = `        Schema::create('${tableName}', function (Blueprint $table) {\n${restoreLines.map(l => `            ${l}`).join('\n')}\n        });`;
         break;
       }
 
@@ -197,29 +258,45 @@ export class MigrationEngine {
         description = `Add performance indexes to '${tableName}'`;
         const indexLines = [];
         const dropIndexLines = [];
+        const isConcurrent = params.concurrent === true || dialect === 'postgresql' && indexes.some(i => i.concurrent === true);
+
+        if (isConcurrent && dialect === 'postgresql') {
+          requiresNoTransaction = true;
+        }
 
         for (const idx of indexes) {
           const cols = Array.isArray(idx.columns) ? idx.columns : [idx.columns];
           const colsStr = cols.map(c => `'${c}'`).join(', ');
           const indexName = idx.name ? `'${idx.name}'` : null;
 
-          if (idx.type === 'unique') {
-            indexLines.push(indexName ? `$table->unique([${colsStr}], ${indexName});` : `$table->unique([${colsStr}]);`);
-            dropIndexLines.push(indexName ? `$table->dropUnique(${indexName});` : `$table->dropUnique([${colsStr}]);`);
-          } else if (idx.type === 'spatial') {
-            indexLines.push(indexName ? `$table->spatialIndex([${colsStr}], ${indexName});` : `$table->spatialIndex([${colsStr}]);`);
-            dropIndexLines.push(indexName ? `$table->dropSpatialIndex(${indexName});` : `$table->dropSpatialIndex([${colsStr}]);`);
-          } else if (idx.type === 'fulltext') {
-            indexLines.push(indexName ? `$table->fullText([${colsStr}], ${indexName});` : `$table->fullText([${colsStr}]);`);
-            dropIndexLines.push(indexName ? `$table->dropFullText(${indexName});` : `$table->dropFullText([${colsStr}]);`);
+          if (isConcurrent && dialect === 'postgresql') {
+            const rawIdxName = idx.name || `idx_${tableName}_${cols.join('_')}`;
+            indexLines.push(`DB::statement('CREATE INDEX CONCURRENTLY IF NOT EXISTS ${rawIdxName} ON ${tableName} (${cols.join(', ')});');`);
+            dropIndexLines.push(`DB::statement('DROP INDEX CONCURRENTLY IF EXISTS ${rawIdxName};');`);
           } else {
-            indexLines.push(indexName ? `$table->index([${colsStr}], ${indexName});` : `$table->index([${colsStr}]);`);
-            dropIndexLines.push(indexName ? `$table->dropIndex(${indexName});` : `$table->dropIndex([${colsStr}]);`);
+            if (idx.type === 'unique') {
+              indexLines.push(indexName ? `$table->unique([${colsStr}], ${indexName});` : `$table->unique([${colsStr}]);`);
+              dropIndexLines.push(indexName ? `$table->dropUnique(${indexName});` : `$table->dropUnique([${colsStr}]);`);
+            } else if (idx.type === 'spatial') {
+              indexLines.push(indexName ? `$table->spatialIndex([${colsStr}], ${indexName});` : `$table->spatialIndex([${colsStr}]);`);
+              dropIndexLines.push(indexName ? `$table->dropSpatialIndex(${indexName});` : `$table->dropSpatialIndex([${colsStr}]);`);
+            } else if (idx.type === 'fulltext') {
+              indexLines.push(indexName ? `$table->fullText([${colsStr}], ${indexName});` : `$table->fullText([${colsStr}]);`);
+              dropIndexLines.push(indexName ? `$table->dropFullText(${indexName});` : `$table->dropFullText([${colsStr}]);`);
+            } else {
+              indexLines.push(indexName ? `$table->index([${colsStr}], ${indexName});` : `$table->index([${colsStr}]);`);
+              dropIndexLines.push(indexName ? `$table->dropIndex(${indexName});` : `$table->dropIndex([${colsStr}]);`);
+            }
           }
         }
 
-        upBody = `        Schema::table('${tableName}', function (Blueprint $table) {\n${indexLines.map(l => `            ${l}`).join('\n')}\n        });`;
-        downBody = `        Schema::table('${tableName}', function (Blueprint $table) {\n${dropIndexLines.map(l => `            ${l}`).join('\n')}\n        });`;
+        if (isConcurrent && dialect === 'postgresql') {
+          upBody = `        ${indexLines.join('\n        ')}`;
+          downBody = `        ${dropIndexLines.join('\n        ')}`;
+        } else {
+          upBody = `        Schema::table('${tableName}', function (Blueprint $table) {\n${indexLines.map(l => `            ${l}`).join('\n')}\n        });`;
+          downBody = `        Schema::table('${tableName}', function (Blueprint $table) {\n${dropIndexLines.map(l => `            ${l}`).join('\n')}\n        });`;
+        }
         break;
       }
 
@@ -303,14 +380,22 @@ export class MigrationEngine {
         const sqlUp = params.sql_up || params.up || '-- Raw SQL Up';
         const sqlDown = params.sql_down || params.down || '-- Raw SQL Down';
 
+        if (/CONCURRENTLY/i.test(sqlUp) && dialect === 'postgresql') {
+          requiresNoTransaction = true;
+        }
+
         upBody = `        DB::statement(<<<SQL\n${sqlUp}\nSQL\n        );`;
         downBody = `        DB::statement(<<<SQL\n${sqlDown}\nSQL\n        );`;
         break;
       }
 
       default:
-        throw new Error(`Unsupported migration operation: ${operation}. Available: create_table, add_columns, drop_columns, modify_column, rename_column, rename_table, add_indexes, drop_indexes, add_foreign_keys, drop_foreign_keys, raw_sql`);
+        throw new Error(`Unsupported migration operation: ${operation}. Available: create_table, drop_table, add_columns, drop_columns, modify_column, rename_column, rename_table, add_indexes, drop_indexes, add_foreign_keys, drop_foreign_keys, raw_sql`);
     }
+
+    const transactionProperty = requiresNoTransaction
+      ? `\n    /**\n     * Disable transactional wrapping for concurrent DDL (required in PostgreSQL).\n     */\n    public bool $withinTransaction = false;\n`
+      : '';
 
     const phpCode = `<?php
 
@@ -322,7 +407,7 @@ use Illuminate\\Support\\Facades\\DB;
 use Illuminate\\Support\\Facades\\Schema;
 
 return new class extends Migration
-{
+{${transactionProperty}
     /**
      * Run the migrations.
      */
@@ -356,6 +441,7 @@ ${downBody}
       target_path: targetPath,
       php_code: phpCode,
       migration_code: phpCode,
+      within_transaction: !requiresNoTransaction,
       artisan_command: migrateCmd,
       artisan_commands: {
         run: migrateCmd,
@@ -365,4 +451,5 @@ ${downBody}
     };
   }
 }
+
 export default MigrationEngine;

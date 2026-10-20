@@ -1,7 +1,7 @@
 {
   "name": "@maccpro/database-mcp",
-  "version": "1.0.0",
-  "description": "Enterprise Database Architecture, Reversible Migrations, SARGable Query Optimizer & Hardware Tuner for MariaDB, MySQL & PostgreSQL",
+  "version": "1.2.0",
+  "description": "Enterprise Database Architecture, Reversible Migrations, SARGable Query Optimizer, PgBouncer Pooler & Hardware Tuner for MariaDB, MySQL, PostgreSQL & SQLite",
   "main": "server.js",
   "type": "module",
   "bin": {
@@ -18,9 +18,11 @@
     "mariadb",
     "mysql",
     "postgresql",
+    "sqlite",
     "laravel",
     "migrations",
     "zero-downtime",
+    "pgbouncer",
     "performance-tuning",
     "antigravity"
   ],
