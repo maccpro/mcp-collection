@@ -2,8 +2,8 @@
 
 /**
  * @file server.js
- * @description Enterprise Database Architecture, Reversible Migrations, SARGable Query Optimizer
- * and Server Tuning MCP Server for MariaDB, MySQL, and PostgreSQL.
+ * @description Enterprise Database Architecture, Reversible Migrations, SARGable Query Optimizer,
+ * Execution Plan Analyzer, Quality Gate, and Server Tuning MCP Server for MariaDB, MySQL, and PostgreSQL.
  * 
  * 100% Offline, Deterministic, Zero-Token & Free.
  */
@@ -20,6 +20,8 @@ import { LockAuditor } from './engine/lock-auditor.js';
 import { SchemaModeler } from './engine/schema-modeler.js';
 import { ConfigTuner } from './engine/config-tuner.js';
 import { MaintenanceEngine } from './engine/maintenance-engine.js';
+import { ExplainAnalyzer } from './engine/explain-analyzer.js';
+import { QualityGate } from './engine/quality-gate.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,11 +29,15 @@ const __dirname = path.dirname(__filename);
 // Load optional .env
 loadEnv(__dirname);
 
+// Connected Environment Defaults
+const DEFAULT_DIALECT = process.env.DB_DEFAULT_DIALECT || process.env.DEFAULT_DATABASE_DIALECT || 'mariadb';
+const DEFAULT_SCOPE = process.env.DB_MIGRATION_SCOPE || process.env.DEFAULT_MIGRATION_SCOPE || 'standard';
+
 // MCP Tool Definitions
 const TOOLS = [
   {
     name: 'db_generate_migration',
-    description: 'Generates production-ready, strictly reversible Laravel anonymous migrations with matching up() and down() methods for MariaDB, MySQL, and PostgreSQL. Adheres to zero-direct-DB-alteration rule and outputs appropriate standard (database/migrations/) or tenant (database/migrations/tenant/) file paths and Artisan execution commands.',
+    description: 'Generates production-ready, strictly reversible Laravel anonymous migrations with matching up() and down() methods for MariaDB, MySQL, and PostgreSQL. Supports create_table, add_columns, drop_columns, modify_column, rename_column, rename_table, add_indexes, drop_indexes, add_foreign_keys, drop_foreign_keys, and raw_sql. Adheres to zero-direct-DB-alteration rule and outputs standard (database/migrations/) or tenant (database/migrations/tenant/) file paths and Artisan execution commands.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -41,20 +47,32 @@ const TOOLS = [
         },
         operation: {
           type: 'string',
-          enum: ['create_table', 'add_columns', 'drop_columns', 'add_indexes'],
+          enum: [
+            'create_table',
+            'add_columns',
+            'drop_columns',
+            'modify_column',
+            'rename_column',
+            'rename_table',
+            'add_indexes',
+            'drop_indexes',
+            'add_foreign_keys',
+            'drop_foreign_keys',
+            'raw_sql'
+          ],
           default: 'create_table',
           description: 'Migration operation to perform.'
         },
         database_type: {
           type: 'string',
           enum: ['mariadb', 'mysql', 'postgresql'],
-          default: 'mariadb',
+          default: DEFAULT_DIALECT,
           description: 'Target database engine dialect.'
         },
         scope: {
           type: 'string',
           enum: ['standard', 'tenant'],
-          default: 'standard',
+          default: DEFAULT_SCOPE,
           description: 'Target migration scope. "standard" targets database/migrations/, "tenant" targets database/migrations/tenant/.'
         },
         primary_key: {
@@ -80,6 +98,8 @@ const TOOLS = [
               nullable: { type: 'boolean' },
               unique: { type: 'boolean' },
               index: { type: 'boolean' },
+              unsigned: { type: 'boolean' },
+              after: { type: 'string' },
               default: { type: ['string', 'number', 'boolean'] },
               comment: { type: 'string' }
             },
@@ -108,7 +128,8 @@ const TOOLS = [
               column: { type: 'string' },
               references: { type: 'string' },
               on: { type: 'string' },
-              on_delete: { type: 'string', enum: ['cascade', 'restrict', 'set null', 'no action'] }
+              on_delete: { type: 'string', enum: ['cascade', 'restrict', 'set null', 'set_null', 'no action'] },
+              on_update: { type: 'string', enum: ['cascade', 'restrict', 'no action'] }
             },
             required: ['column', 'on']
           }
@@ -122,14 +143,18 @@ const TOOLS = [
           type: 'boolean',
           default: false,
           description: 'Whether to include deleted_at soft delete column.'
-        }
+        },
+        from: { type: 'string', description: 'Old column or table name for rename operations.' },
+        to: { type: 'string', description: 'New column or table name for rename operations.' },
+        sql_up: { type: 'string', description: 'Raw SQL statement for up() in raw_sql operation.' },
+        sql_down: { type: 'string', description: 'Raw SQL statement for down() in raw_sql operation.' }
       },
       required: ['table_name']
     }
   },
   {
     name: 'db_analyze_query',
-    description: 'Analyzes SQL and Eloquent queries for performance, SARGability anti-patterns (e.g. YEAR(date), LOWER(col), leading wildcards), applies the ESR (Equality, Sort, Range) indexing rule, and generates both composite index migrations and optimized Eloquent rewriters with eager-loading.',
+    description: 'Analyzes SQL and Eloquent queries for performance, SARGability anti-patterns (e.g. YEAR(date), LOWER(col), leading wildcards, OR predicates, != scans, deep OFFSET pagination, implicit type coercion), applies the ESR (Equality, Sort, Range) indexing rule, and generates both composite index migrations and optimized Eloquent rewriters with eager-loading.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -140,7 +165,7 @@ const TOOLS = [
         dialect: {
           type: 'string',
           enum: ['mariadb', 'mysql', 'postgresql'],
-          default: 'mariadb',
+          default: DEFAULT_DIALECT,
           description: 'Target database engine dialect.'
         },
         table: {
@@ -163,7 +188,7 @@ const TOOLS = [
   },
   {
     name: 'db_design_schema',
-    description: 'Enterprise relational & multi-tenant schema modeler. Converts high-level entity specifications into standard Mermaid ER diagrams (erDiagram), topologically ordered reversible Laravel migrations, and SaaS tenant isolation policies (PostgreSQL Row-Level Security RLS or Eloquent Global Scope Trait).',
+    description: 'Enterprise relational & multi-tenant schema modeler. Converts high-level entity specifications into standard Mermaid ER diagrams (erDiagram), topologically ordered reversible Laravel migrations, and SaaS tenant isolation policies (PostgreSQL Row-Level Security RLS with FORCE, Schema-per-tenant, or Eloquent Global Scope Trait).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -190,12 +215,12 @@ const TOOLS = [
         dialect: {
           type: 'string',
           enum: ['mariadb', 'mysql', 'postgresql'],
-          default: 'mariadb',
+          default: DEFAULT_DIALECT,
           description: 'Target database dialect.'
         },
         tenancy_mode: {
           type: 'string',
-          enum: ['discriminator', 'multi_database', 'single_tenant'],
+          enum: ['discriminator', 'schema', 'multi_database', 'single_tenant'],
           default: 'discriminator',
           description: 'Multi-tenancy isolation architecture.'
         },
@@ -211,7 +236,7 @@ const TOOLS = [
   },
   {
     name: 'db_migration_audit',
-    description: 'Audits migration operations for zero-downtime compliance, table lock hazards (MDL lock queues, PostgreSQL AccessExclusiveLock, table rebuilds, non-concurrent indexes), and outputs step-by-step non-blocking execution recipes.',
+    description: 'Audits migration operations for zero-downtime compliance, table lock hazards (MDL lock queues, PostgreSQL AccessExclusiveLock, volatile defaults, table rebuilds, non-concurrent indexes), and outputs step-by-step non-blocking execution recipes with online DDL tool examples.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -237,7 +262,7 @@ const TOOLS = [
         dialect: {
           type: 'string',
           enum: ['mariadb', 'mysql', 'postgresql'],
-          default: 'mariadb',
+          default: DEFAULT_DIALECT,
           description: 'Target database dialect.'
         },
         estimated_rows: {
@@ -251,7 +276,7 @@ const TOOLS = [
   },
   {
     name: 'db_tune_server_config',
-    description: 'Hardware sizing calculator and NVMe production tuner for MariaDB (my.cnf), MySQL (my.cnf), and PostgreSQL (postgresql.conf). Computes buffer pool, shared buffers, effective cache size, work memory, redo/WAL sizing, and IO capacity.',
+    description: 'Hardware sizing calculator and NVMe production tuner for MariaDB (my.cnf), MySQL (my.cnf), and PostgreSQL (postgresql.conf). Computes buffer pool, shared buffers, effective cache size, work memory, redo/WAL sizing, IO capacity, slow query logging, and Linux kernel sysctl parameters.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -285,7 +310,7 @@ const TOOLS = [
         dialect: {
           type: 'string',
           enum: ['mariadb', 'mysql', 'postgresql'],
-          default: 'mariadb',
+          default: DEFAULT_DIALECT,
           description: 'Target database system.'
         }
       },
@@ -294,25 +319,87 @@ const TOOLS = [
   },
   {
     name: 'db_maintenance_runbook',
-    description: 'Generates enterprise diagnostic SQL queries and CLI runbooks for dead tuple bloat, table fragmentation, index rebuilds, unused index audits, and hung lock killers.',
+    description: 'Generates enterprise diagnostic SQL queries and CLI runbooks for dead tuple bloat, table fragmentation, index rebuilds, unused index audits, replication lag, idle-in-transaction connection starvation, and hung lock killers.',
     inputSchema: {
       type: 'object',
       properties: {
         dialect: {
           type: 'string',
           enum: ['mariadb', 'mysql', 'postgresql'],
-          default: 'mariadb',
+          default: DEFAULT_DIALECT,
           description: 'Database system.'
         },
         task: {
           type: 'string',
-          enum: ['bloat', 'fragmentation', 'locks', 'unused_indexes', 'all'],
+          enum: ['bloat', 'fragmentation', 'locks', 'unused_indexes', 'replication', 'connections', 'all'],
           default: 'all',
           description: 'Maintenance target task.'
         },
         table: {
           type: 'string',
           description: 'Optional target table name to narrow diagnostic query.'
+        }
+      }
+    }
+  },
+  {
+    name: 'db_explain_analyzer',
+    description: 'Parses and analyzes PostgreSQL, MariaDB, and MySQL EXPLAIN and EXPLAIN ANALYZE execution plans. Detects sequential full-table scans, filesorts, temporary disk spills, cardinality estimation mismatches, and suggests concrete index and configuration fixes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plan: {
+          type: 'string',
+          description: 'Raw text or JSON output of EXPLAIN / EXPLAIN ANALYZE command.'
+        },
+        dialect: {
+          type: 'string',
+          enum: ['postgresql', 'mariadb', 'mysql'],
+          default: 'postgresql',
+          description: 'Database system dialect.'
+        },
+        table: {
+          type: 'string',
+          description: 'Optional table name to anchor the analysis.'
+        }
+      },
+      required: ['plan']
+    }
+  },
+  {
+    name: 'db_backup_restore_runbook',
+    description: 'Generates enterprise Disaster Recovery (DR) and Backup/Restore runbooks for MariaDB, MySQL, and PostgreSQL, including non-blocking logical dumps, hot physical backups (pg_basebackup, mariabackup), automated cron rotation, and Point-in-Time Recovery (PITR).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        database_name: {
+          type: 'string',
+          default: 'app_production',
+          description: 'Target database name.'
+        },
+        dialect: {
+          type: 'string',
+          enum: ['mariadb', 'mysql', 'postgresql'],
+          default: DEFAULT_DIALECT,
+          description: 'Target database system.'
+        }
+      }
+    }
+  },
+  {
+    name: 'db_quality_gate',
+    description: 'Automated pre-commit quality gate for database migrations. Scans Laravel and SQL migration files in the workspace for strict reversibility (matching up() and down() methods), multi-tenant scoping, and zero-downtime lock hazards.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_path: {
+          type: 'string',
+          description: 'Root path of the repository/workspace to scan.'
+        },
+        files: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional explicit list of migration file paths to evaluate.'
         }
       }
     }
@@ -327,72 +414,63 @@ async function handleToolCall(name, args) {
     case 'db_generate_migration': {
       const result = MigrationEngine.generate(args);
       return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2)
-          }
-        ]
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
       };
     }
 
     case 'db_analyze_query': {
       const result = QueryAnalyzer.analyze(args);
       return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2)
-          }
-        ]
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
       };
     }
 
     case 'db_design_schema': {
       const result = SchemaModeler.design(args);
       return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2)
-          }
-        ]
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
       };
     }
 
     case 'db_migration_audit': {
       const result = LockAuditor.audit(args);
       return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2)
-          }
-        ]
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
       };
     }
 
     case 'db_tune_server_config': {
       const result = ConfigTuner.tune(args);
       return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2)
-          }
-        ]
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
       };
     }
 
     case 'db_maintenance_runbook': {
       const result = MaintenanceEngine.getRunbook(args);
       return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2)
-          }
-        ]
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+      };
+    }
+
+    case 'db_explain_analyzer': {
+      const result = ExplainAnalyzer.analyze(args);
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+      };
+    }
+
+    case 'db_backup_restore_runbook': {
+      const result = MaintenanceEngine.getBackupRunbook(args);
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+      };
+    }
+
+    case 'db_quality_gate': {
+      const result = QualityGate.evaluate(args);
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
       };
     }
 
@@ -441,7 +519,7 @@ rl.on('line', async (line) => {
             },
             serverInfo: {
               name: 'database-mcp',
-              version: '1.0.0'
+              version: '1.1.0'
             }
           }
         });

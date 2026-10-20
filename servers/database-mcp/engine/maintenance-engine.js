@@ -1,7 +1,7 @@
 /**
  * @file maintenance-engine.js
- * @description Enterprise Database Health, Bloat Diagnostics, and Maintenance Runbooks
- * for MariaDB, MySQL, and PostgreSQL.
+ * @description Enterprise Database Health, Bloat Diagnostics, Replication Monitoring,
+ * Disaster Recovery, and Maintenance Runbooks for MariaDB, MySQL, and PostgreSQL.
  */
 
 class MaintenanceEngine {
@@ -9,7 +9,7 @@ class MaintenanceEngine {
    * Generate diagnostic queries and maintenance runbooks.
    * @param {Object} params
    * @param {string} [params.dialect='mariadb'] - 'mariadb' | 'mysql' | 'postgresql'
-   * @param {string} [params.task='all'] - 'bloat' | 'fragmentation' | 'locks' | 'unused_indexes' | 'all'
+   * @param {string} [params.task='all'] - 'bloat' | 'fragmentation' | 'locks' | 'unused_indexes' | 'replication' | 'connections' | 'all'
    * @param {string} [params.table] - Target table name
    * @returns {Object} Comprehensive maintenance runbook with executable diagnostic SQL and remediation scripts
    */
@@ -21,6 +21,50 @@ class MaintenanceEngine {
       return this._getPostgresqlRunbook(task, table);
     } else {
       return this._getMySQLRunbook(normalizedDialect, task, table);
+    }
+  }
+
+  /**
+   * Generate dedicated Disaster Recovery and Backup/Restore Runbook
+   */
+  static getBackupRunbook(params) {
+    const { dialect = 'mariadb', database_name = '<database_name>', backup_type = 'both' } = params;
+    const d = dialect.toLowerCase();
+
+    if (d === 'postgresql') {
+      return {
+        dialect: 'postgresql',
+        database: database_name,
+        logical_backup: {
+          description: 'Compressed custom-format pg_dump with parallel thread restore capabilities.',
+          backup_command: `pg_dump -Fc -h 127.0.0.1 -U postgres ${database_name} > backup_${database_name}_$(date +%Y%m%d_%H%M%S).dump`,
+          restore_command: `pg_restore -d ${database_name} -j 4 --clean --if-exists backup_${database_name}.dump`,
+          cron_daily_schedule: `0 2 * * * pg_dump -Fc -h 127.0.0.1 -U postgres ${database_name} > /backups/pg/daily_$(date +\\%F).dump && find /backups/pg/ -type f -mtime +7 -delete`
+        },
+        physical_backup_pitr: {
+          description: 'Continuous WAL Archiving and Point-In-Time Recovery (PITR) using pg_basebackup.',
+          basebackup_command: `pg_basebackup -h 127.0.0.1 -U replicator -D /var/lib/postgresql/backup_$(date +%F) -Fp -Xs -P -R`,
+          wal_archive_setting: `archive_mode = on\narchive_command = 'test ! -f /mnt/wal_archive/%f && cp %p /mnt/wal_archive/%f'`,
+          pitr_recovery_target: `restore_command = 'cp /mnt/wal_archive/%f %p'\nrecovery_target_time = '2026-10-20 08:30:00 UTC'`
+        }
+      };
+    } else {
+      return {
+        dialect: d,
+        database: database_name,
+        logical_backup: {
+          description: 'mysqldump/mariadb-dump with single-transaction lock-free read consistency for InnoDB.',
+          backup_command: `mysqldump -u root -p --single-transaction --quick --routines --triggers --events ${database_name} | gzip > backup_${database_name}_$(date +%F).sql.gz`,
+          restore_command: `gunzip < backup_${database_name}.sql.gz | mysql -u root -p ${database_name}`,
+          cron_daily_schedule: `0 2 * * * mysqldump -u root -p --single-transaction --quick --routines --triggers ${database_name} | gzip > /backups/mysql/daily_$(date +\\%F).sql.gz && find /backups/mysql/ -type f -mtime +7 -delete`
+        },
+        physical_backup_hot: {
+          description: 'Non-blocking physical InnoDB backup using MariaBackup / Percona XtraBackup.',
+          mariabackup_command: `mariabackup --backup --target-dir=/data/backup/$(date +%F) --user=root`,
+          prepare_command: `mariabackup --prepare --target-dir=/data/backup/<date>`,
+          restore_command: `mariabackup --copy-back --target-dir=/data/backup/<date>`
+        }
+      };
     }
   }
 
@@ -117,6 +161,44 @@ WHERE NOT blocked_locks.granted;`,
       });
     }
 
+    // 4. Replication Health & Lag
+    if (task === 'replication' || task === 'all') {
+      runbook.diagnostic_tasks.push({
+        title: 'Replication Health & Byte Lag',
+        description: 'Monitors PostgreSQL physical streaming replication and WAL sender/receiver byte difference.',
+        diagnostic_sql: `SELECT
+    client_addr,
+    application_name,
+    state,
+    sync_state,
+    sync_priority,
+    pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) AS lag_bytes,
+    ROUND(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) / 1024.0 / 1024.0, 2) AS lag_mb
+FROM pg_stat_replication;`,
+        remediation_action: 'If lag_mb is growing, check replica disk write throughput, max_wal_size, or increase max_parallel_workers on the replica.'
+      });
+    }
+
+    // 5. Connection Starvation & Idle In Transaction
+    if (task === 'connections' || task === 'all') {
+      runbook.diagnostic_tasks.push({
+        title: 'Idle in Transaction Connection Audit',
+        description: 'Detects connections holding transactions open without active queries, blocking autovacuum and freezing transaction ID horizon.',
+        diagnostic_sql: `SELECT
+    pid,
+    usename,
+    client_addr,
+    state,
+    NOW() - state_change AS idle_duration,
+    query
+FROM pg_stat_activity
+WHERE state = 'idle in transaction'
+  AND NOW() - state_change > interval '5 seconds'
+ORDER BY state_change ASC;`,
+        remediation_action: 'Set idle_in_transaction_session_timeout = "30s" in postgresql.conf to automatically terminate zombie transactions.'
+      });
+    }
+
     return runbook;
   }
 
@@ -193,10 +275,19 @@ ORDER BY time DESC;`,
       });
     }
 
+    // 4. Replication Status
+    if (task === 'replication' || task === 'all') {
+      runbook.diagnostic_tasks.push({
+        title: 'Replication Health & Seconds Behind Master',
+        description: 'Checks MySQL / MariaDB replica thread status, I/O thread, SQL thread, and replication lag.',
+        diagnostic_sql: flavor === 'mysql' ? 'SHOW REPLICA STATUS\\G' : 'SHOW SLAVE STATUS\\G',
+        remediation_action: 'Check Seconds_Behind_Source / Seconds_Behind_Master. If Replica_SQL_Running is No, investigate Last_SQL_Error.'
+      });
+    }
+
     return runbook;
   }
 }
 
 export { MaintenanceEngine };
 export default MaintenanceEngine;
-

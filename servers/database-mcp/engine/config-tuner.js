@@ -100,10 +100,14 @@ wal_buffers = 16MB
 min_wal_size = ${minWalSize}
 max_wal_size = ${maxWalSize}
 checkpoint_completion_target = 0.9
+checkpoint_timeout = 15min
+wal_compression = on
 
 # --- DISK & I/O TUNING (${disk_type.toUpperCase()}) ---
 random_page_cost = ${randomPageCost}
 effective_io_concurrency = ${effectiveIoConcurrency}
+track_io_timing = on
+track_activity_query_size = 4096
 
 # --- PARALLEL WORKERS (${vcpu} vCPUs) ---
 max_worker_processes = ${maxWorkerProcesses}
@@ -119,8 +123,10 @@ autovacuum_vacuum_cost_delay = 2ms
 autovacuum_vacuum_scale_factor = 0.05
 autovacuum_analyze_scale_factor = 0.02
 
-# --- QUERY PLANNER ---
+# --- QUERY PLANNER & STATS ---
 default_statistics_target = 100
+shared_preload_libraries = 'pg_stat_statements'
+pg_stat_statements.track = all
 `;
 
     return {
@@ -137,7 +143,16 @@ default_statistics_target = 100
         max_parallel_workers: maxParallelWorkers
       },
       recommended_config_path: '/etc/postgresql/<version>/main/postgresql.conf',
-      config_file_content: configContent
+      config_file_content: configContent,
+      linux_os_tuning: {
+        sysctl: {
+          'vm.swappiness': 10,
+          'vm.dirty_background_ratio': 3,
+          'vm.dirty_ratio': 10,
+          'fs.file-max': 2097152
+        },
+        transparent_hugepage: ram_gb >= 32 ? 'madvise' : 'never'
+      }
     };
   }
 
@@ -182,6 +197,7 @@ max_connections                = ${maxConnections}
 max_connect_errors             = 1000000
 wait_timeout                   = 600
 interactive_timeout            = 600
+${flavor === 'mariadb' ? 'thread_handling                = pool-of-threads' : ''}
 
 # --- INNODB BUFFER POOL & MEMORY ---
 innodb_buffer_pool_size        = ${bufferPoolMB}M
@@ -206,6 +222,12 @@ table_definition_cache         = 2048
 tmp_table_size                 = 64M
 max_heap_table_size            = 64M
 
+# --- SLOW QUERY LOGGING ---
+slow_query_log                 = 1
+long_query_time                = 1.0
+log_queries_not_using_indexes  = 0
+min_examined_row_limit         = 1000
+
 # --- CHARACTER SET & COLLATION ---
 character-set-server           = utf8mb4
 collation-server               = utf8mb4_unicode_ci
@@ -225,11 +247,19 @@ collation-server               = utf8mb4_unicode_ci
         innodb_flush_method: 'O_DIRECT'
       },
       recommended_config_path: configPath,
-      config_file_content: configContent
+      config_file_content: configContent,
+      linux_os_tuning: {
+        sysctl: {
+          'vm.swappiness': 10,
+          'vm.dirty_background_ratio': 3,
+          'vm.dirty_ratio': 10,
+          'fs.file-max': 2097152
+        },
+        transparent_hugepage: 'never'
+      }
     };
   }
 }
 
 export { ConfigTuner };
 export default ConfigTuner;
-

@@ -64,7 +64,7 @@ class QueryAnalyzer {
    * Detect table from query
    */
   static _detectTable(sql) {
-    const fromMatch = sql.match(/\bFROM\s+[`"']?([a-zA-Z0-9_]+)[`"']?/i);
+    const fromMatch = sql.match(/\bFROM\s+[`"']?([a-zA-Z0-9_]+)[`"']?(?:\s+(?:AS\s+)?([a-zA-Z0-9_]+))?/i);
     if (fromMatch && fromMatch[1]) return fromMatch[1];
 
     const updateMatch = sql.match(/\bUPDATE\s+[`"']?([a-zA-Z0-9_]+)[`"']?/i);
@@ -77,7 +77,7 @@ class QueryAnalyzer {
   }
 
   /**
-   * Check SARGability anti-patterns
+   * Check SARGability and query performance anti-patterns
    */
   static _checkSargability(sql, dialect, issues, recommendations) {
     // Anti-pattern 1: Function wrapping columns in WHERE clause (e.g., YEAR(date), DATE(date))
@@ -187,6 +187,72 @@ class QueryAnalyzer {
         action: `Replace 'NOT IN' with 'NOT EXISTS' or a 'LEFT JOIN ... WHERE right_table.id IS NULL'.`
       });
     }
+
+    // Anti-pattern 7: OR condition across different columns in WHERE
+    const whereMatch = sql.match(/\bWHERE\b(.*?)(?:\bORDER\s+BY\b|\bGROUP\s+BY\b|\bLIMIT\b|$)/i);
+    if (whereMatch && /\bOR\b/i.test(whereMatch[1])) {
+      issues.push({
+        type: 'OR_PREDICATE_INDEX_MERGE_HAZARD',
+        severity: 'HIGH',
+        description: `'OR' conditions across different columns cannot be satisfied by a single composite B-Tree index and often trigger full table scans or erratic Index Merge unions.`
+      });
+      recommendations.push({
+        category: 'QUERY_OPTIMIZATION',
+        action: `Rewrite the query using 'UNION ALL' of two index-friendly SELECT statements, or ensure separate individual indexes exist on each OR column.`
+      });
+    }
+
+    // Anti-pattern 8: Inequality operator (!= or <>)
+    if (whereMatch && /(?:!=|<>)/.test(whereMatch[1])) {
+      issues.push({
+        type: 'INEQUALITY_OPERATOR_SCAN_HAZARD',
+        severity: 'MEDIUM',
+        description: `Inequality operators ('!=' or '<>') prevent index seeks because the B-Tree index must scan virtually all leaf pages.`
+      });
+      recommendations.push({
+        category: 'QUERY_OPTIMIZATION',
+        action: `If searching for a small subset, invert condition to positive equality (e.g. status IN ('pending', 'failed') instead of status != 'completed').`
+      });
+    }
+
+    // Anti-pattern 9: Deep OFFSET Pagination Trap
+    const offsetMatch = sql.match(/\bOFFSET\s+(\d+)/i) || sql.match(/\bLIMIT\s+\d+\s*,\s*(\d+)/i);
+    if (offsetMatch) {
+      const offsetVal = parseInt(offsetMatch[1], 10);
+      if (offsetVal >= 1000) {
+        issues.push({
+          type: 'DEEP_OFFSET_PAGINATION_TRAP',
+          severity: 'HIGH',
+          offset_value: offsetVal,
+          description: `Deep pagination with OFFSET ${offsetVal.toLocaleString()} forces the database engine to scan and discard ${offsetVal.toLocaleString()} rows before returning results, causing severe CPU and I/O latency.`
+        });
+        recommendations.push({
+          category: 'PAGINATION_FIX',
+          action: `Implement Keyset / Cursor Pagination using primary key seeking: 'WHERE id > :last_seen_id ORDER BY id ASC LIMIT 20'.`
+        });
+      }
+    }
+
+    // Anti-pattern 10: GROUP BY and ORDER BY Mismatch
+    const groupMatch = sql.match(/\bGROUP\s+BY\s+(.*?)(?:\bHAVING\b|\bORDER\s+BY\b|\bLIMIT\b|$)/i);
+    const orderMatch = sql.match(/\bORDER\s+BY\s+(.*?)(?:\bLIMIT\b|$)/i);
+    if (groupMatch && orderMatch) {
+      const groupCol = groupMatch[1].trim().split(',')[0].trim().replace(/^.*?\./, '');
+      const orderCol = orderMatch[1].trim().split(',')[0].trim().replace(/^.*?\./, '').replace(/\s+(?:ASC|DESC)/i, '');
+      if (groupCol.toLowerCase() !== orderCol.toLowerCase()) {
+        issues.push({
+          type: 'GROUP_BY_ORDER_BY_MISMATCH_FILESORT',
+          severity: 'HIGH',
+          group_by: groupCol,
+          order_by: orderCol,
+          description: `GROUP BY column ('${groupCol}') does not match ORDER BY column ('${orderCol}'). Forces the engine to create an intermediate temporary table and run a filesort.`
+        });
+        recommendations.push({
+          category: 'SORT_OPTIMIZATION',
+          action: `Align GROUP BY and ORDER BY clauses to reference the same columns in matching sequence.`
+        });
+      }
+    }
   }
 
   /**
@@ -201,8 +267,9 @@ class QueryAnalyzer {
       const equalityRegex = /(?:[`"']?([a-zA-Z0-9_]+)[`"']?\.)?[`"']?([a-zA-Z0-9_]+)[`"']?\s*(?:=|IS\s+NULL)\s*[^<>=]/gi;
       let eq;
       while ((eq = equalityRegex.exec(whereClause)) !== null) {
+        // Strip table alias prefix (e.g. o.status -> status)
         const col = eq[2] || eq[1];
-        if (col && !['and', 'or', 'where'].includes(col.toLowerCase())) {
+        if (col && !['and', 'or', 'where', 'not', 'null'].includes(col.toLowerCase())) {
           esr.equality.push(col.toLowerCase());
         }
       }
@@ -212,7 +279,7 @@ class QueryAnalyzer {
       let rg;
       while ((rg = rangeRegex.exec(whereClause)) !== null) {
         const col = rg[2] || rg[1];
-        if (col && !['and', 'or', 'where'].includes(col.toLowerCase())) {
+        if (col && !['and', 'or', 'where', 'not'].includes(col.toLowerCase())) {
           // If already in equality, don't duplicate as range
           if (!esr.equality.includes(col.toLowerCase())) {
             esr.range.push(col.toLowerCase());
@@ -344,4 +411,3 @@ class QueryAnalyzer {
 
 export { QueryAnalyzer };
 export default QueryAnalyzer;
-

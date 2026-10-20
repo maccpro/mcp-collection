@@ -31,23 +31,55 @@ class LockAuditor {
         case 'add_column': {
           const hasDefault = op.default !== undefined;
           const isNotNull = op.nullable === false;
+          const defaultStr = String(op.default || '').toLowerCase();
+          const isVolatileDefault = defaultStr.includes('now()') || defaultStr.includes('current_timestamp') || defaultStr.includes('random()') || defaultStr.includes('uuid()');
 
-          if (isNotNull && hasDefault && normalizedDialect === 'mysql' && estimated_rows > 500000) {
-            hazards.push({
-              operation: `ADD COLUMN ${colName}`,
-              risk_level: 'HIGH',
-              lock_type: 'METADATA_LOCK / TABLE_COPY',
-              description: `Adding NOT NULL column with default on MySQL on a large table (${estimated_rows.toLocaleString()} rows) may cause a full table copy or extended lock.`,
-              mitigation: 'Add column as NULLABLE without default first, backfill in batches, then set default and apply NOT NULL constraint.'
-            });
-            highestRisk = this._escalateRisk(highestRisk, 'HIGH');
+          if (normalizedDialect === 'postgresql') {
+            if (hasDefault && isVolatileDefault) {
+              hazards.push({
+                operation: `ADD COLUMN ${colName}`,
+                risk_level: 'HIGH',
+                lock_type: 'AccessExclusiveLock (Full Table Rewrite)',
+                description: `Adding a column with a volatile default expression ('${op.default}') in PostgreSQL forces a full table rewrite under AccessExclusiveLock.`,
+                mitigation: 'Add column as NULLABLE without default first, backfill rows in batches, then set the default.'
+              });
+              highestRisk = this._escalateRisk(highestRisk, 'HIGH');
+            } else if (isNotNull && !hasDefault) {
+              hazards.push({
+                operation: `ADD COLUMN ${colName} NOT NULL`,
+                risk_level: 'HIGH',
+                lock_type: 'AccessExclusiveLock',
+                description: 'Adding a NOT NULL column without a default requires an immediate table validation scan.',
+                mitigation: `1) Add column as NULLABLE; 2) Backfill historical rows; 3) Add CHECK (${colName} IS NOT NULL) NOT VALID; 4) Run VALIDATE CONSTRAINT.`
+              });
+              highestRisk = this._escalateRisk(highestRisk, 'HIGH');
+            } else {
+              hazards.push({
+                operation: `ADD COLUMN ${colName}`,
+                risk_level: 'LOW',
+                lock_type: 'AccessExclusiveLock (Instant / Metadata only)',
+                description: 'Constant defaults in PostgreSQL 11+ are stored in catalog metadata without rewriting rows.'
+              });
+            }
           } else {
-            hazards.push({
-              operation: `ADD COLUMN ${colName}`,
-              risk_level: 'LOW',
-              lock_type: normalizedDialect === 'postgresql' ? 'AccessExclusiveLock (brief)' : 'ALGORITHM=INPLACE',
-              description: 'Metadata-only operation in modern engines (PG 11+, MariaDB 10.3+, MySQL 8.0+).'
-            });
+            // MySQL / MariaDB
+            if (isNotNull && hasDefault && normalizedDialect === 'mysql' && estimated_rows > 500000) {
+              hazards.push({
+                operation: `ADD COLUMN ${colName}`,
+                risk_level: 'HIGH',
+                lock_type: 'METADATA_LOCK / TABLE_COPY',
+                description: `Adding NOT NULL column with default on MySQL on a large table (${estimated_rows.toLocaleString()} rows) may cause a full table copy or extended lock.`,
+                mitigation: 'Add column as NULLABLE without default first, backfill in batches, then set default and apply NOT NULL constraint.'
+              });
+              highestRisk = this._escalateRisk(highestRisk, 'HIGH');
+            } else {
+              hazards.push({
+                operation: `ADD COLUMN ${colName}`,
+                risk_level: 'LOW',
+                lock_type: 'ALGORITHM=INSTANT',
+                description: 'Metadata-only operation in modern engines (MySQL 8.0+, MariaDB 10.3+).'
+              });
+            }
           }
           break;
         }
@@ -116,7 +148,7 @@ class LockAuditor {
               risk_level: 'HIGH',
               lock_type: 'ShareRowExclusiveLock',
               description: 'Validating foreign key acquires a ShareRowExclusiveLock on both tables, blocking concurrent updates.',
-              mitigation: 'Add foreign key with NOT VALID first (instant lock), then run VALIDATE CONSTRAINT in a separate non-blocking step.'
+              mitigation: 'Add foreign key with NOT VALID first (instant lock), then run VALIDATE CONSTRAINT in a separate non-blocking step:\n  ALTER TABLE t ADD CONSTRAINT fk_name FOREIGN KEY (col) REFERENCES p(id) NOT VALID;\n  ALTER TABLE t VALIDATE CONSTRAINT fk_name;'
             });
             highestRisk = this._escalateRisk(highestRisk, 'HIGH');
           } else {
@@ -158,9 +190,13 @@ class LockAuditor {
 
     // Build zero-downtime execution runbook
     if (highestRisk === 'CRITICAL' || highestRisk === 'HIGH') {
-      safeRecipeSteps.push('1. Set conservative lock_wait_timeout (e.g., SET statement_timeout = "5s" in PG or SET lock_wait_timeout = 5 in MariaDB/MySQL) before running DDL.');
+      safeRecipeSteps.push('1. Set conservative lock timeout (SET statement_timeout = "5s" in PG or SET lock_wait_timeout = 5 in MariaDB/MySQL) before running DDL.');
       safeRecipeSteps.push('2. If migrating large tables (>1M rows), avoid transactions that hold DDL locks while doing data backfills.');
-      safeRecipeSteps.push('3. Execute during lowest traffic window or use pg-roll / pt-online-schema-change / gh-ost for massive tables.');
+      if (normalizedDialect === 'postgresql') {
+        safeRecipeSteps.push('3. For zero-downtime online schema changes on massive tables, consider `pg-roll` (github.com/xataio/pg-roll).');
+      } else {
+        safeRecipeSteps.push(`3. For tables over 5M rows, use triggerless online DDL tools:\n   gh-ost --user="app" --password="..." --host="127.0.0.1" --database="db" --table="${table}" --alter="..." --execute`);
+      }
     } else {
       safeRecipeSteps.push('Standard online migration is safe to execute. Always run in staging environment first.');
     }
@@ -185,4 +221,3 @@ class LockAuditor {
 
 export { LockAuditor };
 export default LockAuditor;
-

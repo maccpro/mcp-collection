@@ -13,7 +13,7 @@ class SchemaModeler {
    * @param {string} params.project_name
    * @param {Array<Object>} params.tables - Table definitions
    * @param {string} [params.dialect='mariadb'] - 'mariadb' | 'mysql' | 'postgresql'
-   * @param {string} [params.tenancy_mode='discriminator'] - 'discriminator' (tenant_id column) | 'multi_database' | 'single_tenant'
+   * @param {string} [params.tenancy_mode='discriminator'] - 'discriminator' | 'schema' | 'multi_database' | 'single_tenant'
    * @param {string} [params.primary_key_type='id'] - 'id' | 'uuid' | 'ulid'
    * @returns {Object} Schema model with Mermaid ER diagram, ordered migrations, and tenant isolation policies
    */
@@ -37,7 +37,7 @@ class SchemaModeler {
     // 3. Generate Reversible Laravel Migrations in dependency order
     const orderedMigrations = this._generateOrderedMigrations(enrichedTables, normalizedDialect, tenancy_mode, primary_key_type);
 
-    // 4. Generate Tenant Isolation Policies (PostgreSQL RLS or Eloquent Global Scope)
+    // 4. Generate Tenant Isolation Policies (PostgreSQL RLS, Schema search_path, or Eloquent Global Scope)
     const tenantSecurityPolicies = this._generateTenantPolicies(enrichedTables, normalizedDialect, tenancy_mode);
 
     return {
@@ -52,7 +52,7 @@ class SchemaModeler {
       table_summary: enrichedTables.map(t => ({
         table: t.name,
         columns_count: (t.columns || []).length,
-        foreign_keys: (t.foreign_keys || []).map(fk => `${fk.column} -> ${fk.references_table}.${fk.references_column || 'id'}`)
+        foreign_keys: (t.foreign_keys || []).map(fk => `${fk.column} -> ${(fk.on || fk.references_table)}.${fk.references || 'id'}`)
       }))
     };
   }
@@ -76,7 +76,8 @@ class SchemaModeler {
             { name: 'domain', type: 'string', length: 150, nullable: true, unique: true },
             { name: 'status', type: 'string', length: 50, default: 'active', index: true },
             { name: 'plan', type: 'string', length: 50, default: 'basic' }
-          ]
+          ],
+          foreign_keys: []
         });
       }
 
@@ -84,17 +85,29 @@ class SchemaModeler {
       for (const t of enriched) {
         if (t.name === 'tenants' || t.is_global === true) continue;
 
-        const hasTenantCol = (t.columns || []).some(c => c.name === 'tenant_id');
+        t.columns = t.columns || [];
+        t.foreign_keys = t.foreign_keys || [];
+
+        const hasTenantCol = t.columns.some(c => c.name === 'tenant_id');
         if (!hasTenantCol) {
-          t.columns = t.columns || [];
           t.columns.unshift({
             name: 'tenant_id',
-            type: pkType === 'uuid' ? 'uuid' : 'foreignId',
+            type: pkType === 'uuid' ? 'uuid' : 'foreign_id',
             index: true,
-            nullable: false,
-            references: 'tenants',
-            on_delete: 'cascade'
+            nullable: false
           });
+
+          // Add formal foreign key
+          const hasTenantFk = t.foreign_keys.some(fk => fk.column === 'tenant_id');
+          if (!hasTenantFk) {
+            t.foreign_keys.push({
+              column: 'tenant_id',
+              references: 'id',
+              on: 'tenants',
+              references_table: 'tenants',
+              on_delete: 'cascade'
+            });
+          }
         }
       }
     }
@@ -116,21 +129,41 @@ class SchemaModeler {
       for (const col of table.columns || []) {
         const colType = col.type || 'string';
         const colName = col.name;
-        const keyIndicator = col.name === 'tenant_id' ? 'FK' : col.references ? 'FK' : '';
+        const isFk = col.name === 'tenant_id' || col.references || (table.foreign_keys || []).some(fk => fk.column === colName);
+        const keyIndicator = isFk ? 'FK' : '';
         mermaid += `        ${colType} ${colName} ${keyIndicator}\n`;
       }
       mermaid += `    }\n`;
     }
 
     // Relationships
+    const seenRelations = new Set();
     for (const table of tables) {
+      // Check column-level references
       for (const col of table.columns || []) {
-        if (col.references) {
-          mermaid += `    ${col.references} ||--o{ ${table.name} : "has"\n`;
+        let parent = col.on || col.references_table;
+        if (!parent && col.references && col.references !== 'id') {
+          parent = col.references;
+        }
+        if (parent && parent !== table.name) {
+          const relKey = `${parent}->${table.name}`;
+          if (!seenRelations.has(relKey)) {
+            mermaid += `    ${parent} ||--o{ ${table.name} : "has"\n`;
+            seenRelations.add(relKey);
+          }
         }
       }
+
+      // Check foreign_keys array
       for (const fk of table.foreign_keys || []) {
-        mermaid += `    ${fk.references_table} ||--o{ ${table.name} : "references"\n`;
+        const parent = fk.on || fk.references_table;
+        if (parent && parent !== table.name) {
+          const relKey = `${parent}->${table.name}`;
+          if (!seenRelations.has(relKey)) {
+            mermaid += `    ${parent} ||--o{ ${table.name} : "references"\n`;
+            seenRelations.add(relKey);
+          }
+        }
       }
     }
 
@@ -141,15 +174,11 @@ class SchemaModeler {
    * Generate ordered migrations
    */
   static _generateOrderedMigrations(tables, dialect, tenancyMode, pkType) {
-    // Topological sort by foreign key dependencies
     const sortedTables = this._topologicalSort(tables);
     const migrations = [];
-    let timestampCounter = 1;
 
     for (const table of sortedTables) {
       const scope = (tenancyMode === 'multi_database' && table.name !== 'tenants') ? 'tenant' : 'standard';
-      const timestamp = `2026_09_26_${String(timestampCounter).padStart(6, '0')}`;
-      timestampCounter++;
 
       const migration = MigrationEngine.generate({
         operation: 'create_table',
@@ -164,7 +193,7 @@ class SchemaModeler {
       migrations.push({
         table: table.name,
         scope,
-        suggested_filename: `${timestamp}_create_${table.name}_table.php`,
+        suggested_filename: migration.target_path.split('/').pop(),
         target_path: migration.target_path,
         migration_code: migration.migration_code,
         artisan_command: migration.artisan_command
@@ -188,13 +217,16 @@ class SchemaModeler {
 
     for (const t of tables) {
       for (const col of t.columns || []) {
-        if (col.references && tableMap.has(col.references) && col.references !== t.name) {
-          dependencies.get(t.name).add(col.references);
+        let parent = col.on || col.references_table;
+        if (!parent && col.references && col.references !== 'id') parent = col.references;
+        if (parent && tableMap.has(parent) && parent !== t.name) {
+          dependencies.get(t.name).add(parent);
         }
       }
       for (const fk of t.foreign_keys || []) {
-        if (fk.references_table && tableMap.has(fk.references_table) && fk.references_table !== t.name) {
-          dependencies.get(t.name).add(fk.references_table);
+        const parent = fk.on || fk.references_table;
+        if (parent && tableMap.has(parent) && parent !== t.name) {
+          dependencies.get(t.name).add(parent);
         }
       }
     }
@@ -227,10 +259,19 @@ class SchemaModeler {
    * Generate Tenant Security Policies
    */
   static _generateTenantPolicies(tables, dialect, tenancyMode) {
-    if (tenancyMode !== 'discriminator') {
+    if (tenancyMode === 'multi_database') {
       return {
         strategy: 'Multi-Database Isolation',
-        description: 'Tenants are isolated via dedicated database instances/schemas. Connection is dynamically switched by tenant identifier in middleware.'
+        description: 'Tenants are isolated via dedicated database instances. Connection is dynamically switched by tenant identifier in middleware via Config::set("database.connections.tenant.database", $tenantDb).'
+      };
+    }
+
+    if (tenancyMode === 'schema' && dialect === 'postgresql') {
+      return {
+        strategy: 'PostgreSQL Schema-per-Tenant Isolation',
+        dialect: 'postgresql',
+        instructions: 'Each tenant has a dedicated PostgreSQL schema. Application switches search_path per request via DB::statement("SET search_path TO tenant_" . $tenantId . ", public");',
+        schema_setup_sql: `CREATE SCHEMA IF NOT EXISTS tenant_<tenant_id>;\n-- Migrations run with search_path set to tenant schema.`
       };
     }
 
@@ -238,8 +279,9 @@ class SchemaModeler {
       const rlsStatements = [];
       for (const t of tables) {
         if (t.name === 'tenants' || t.is_global) continue;
-        rlsStatements.push(`-- Enable Row Level Security for ${t.name}
+        rlsStatements.push(`-- Enable and FORCE Row Level Security for ${t.name} (prevents table owner bypass)
 ALTER TABLE ${t.name} ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ${t.name} FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY tenant_isolation_policy ON ${t.name}
     FOR ALL
@@ -250,7 +292,7 @@ CREATE POLICY tenant_isolation_policy ON ${t.name}
       return {
         strategy: 'PostgreSQL Row-Level Security (RLS)',
         dialect: 'postgresql',
-        instructions: 'PostgreSQL enforces tenant data isolation at the engine level. Set app.current_tenant_id in application middleware via DB::statement("SET LOCAL app.current_tenant_id = ?", [$tenantId]);',
+        instructions: 'PostgreSQL enforces tenant data isolation at the engine level. Set app.current_tenant_id in application middleware via DB::statement("SET LOCAL app.current_tenant_id = ?", [$tenantId]); FORCE ROW LEVEL SECURITY guarantees table owners cannot leak data.',
         rls_sql: rlsStatements.join('\n')
       };
     }
@@ -294,4 +336,3 @@ trait BelongsToTenant
 
 export { SchemaModeler };
 export default SchemaModeler;
-
