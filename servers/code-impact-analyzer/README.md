@@ -88,17 +88,6 @@ npm test
 }
 ```
 
----
-
-## 🤖 Global Agent Rules (`AGENTS.md`)
-
-When setting up this MCP server in a new environment, add the following hard rule to your AI assistant's system instructions (e.g. `~/.gemini/config/AGENTS.md`, `.cursorrules`, or `CLAUDE.md`):
-
-```markdown
-- **Auto Dynamic Code Impact & Blast Radius Gate (code-impact-analyzer)**: Always utilize `code-impact-analyzer` tools (`cia_erp_forensic_audit`, `cia_erp_invariants_check`, `cia_production_gates`, `cia_deep_impact_analysis`, `cia_executive_verdict`, `cia_analyze_git_diff`, `cia_trace_symbol`, `cia_db_blast_radius`, `cia_targeted_test_suite`, `cia_quality_gate`) before commits or PRs to calculate blast radius, detect in-flight queue hazards, multi-tenant leaks, contract-breaking changes, evaluate ERP accounting/inventory invariants, prevent lost-update concurrency races, and execute targeted test suites.
-```
-
----
 
 ## 🛡️ Antigravity Auto-Permission Grants (`config.json`)
 

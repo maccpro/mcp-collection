@@ -109,18 +109,6 @@ BACKEND_TIMEOUT_MS=90000
 
 ---
 
-## 🤖 Antigravity Automated Enforcement Rule
-
-To selectively offload heavy application code generation and business logic implementation while preserving primary quota, configure this rule in Antigravity's global rules (`AGENTS.md`):
-
-```markdown
-- **Selective Backend Code Generation Offload & Mandatory Review (backend-mcp)**:
-  - **Selective Offload**: Offload heavy routine boilerplate, large application classes, full service layers, and extensive business logic to `backend_generate_code` from `backend-mcp` (or alias `mimo_generate_code`) to preserve primary quota. Do NOT offload small surgical edits, minor bug fixes, config adjustments, or simple single-method changes—handle those directly with primary Antigravity for speed and contextual precision.
-  - **Mandatory Review & Verification**: Antigravity must NEVER blindly insert or output generated code from `backend-mcp`. Always rigorously inspect, review, and refine the returned code for architectural compliance, security standards (SQL injection, XSS, input validation), and project conventions before applying it to the codebase.
-```
-
----
-
 ## 🧪 Testing
 
 Run the comprehensive enterprise test suite:
