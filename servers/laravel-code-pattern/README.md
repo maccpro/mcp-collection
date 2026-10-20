@@ -1,4 +1,4 @@
-# Laravel Code Pattern MCP Server (v2.2.0)
+# Laravel Code Pattern MCP Server (v2.3.0)
 
 Professional, enterprise-grade Model Context Protocol (MCP) quality gate and **Dynamic Relational Architecture Engine** for **Google Antigravity**, **Claude Desktop**, and **Cursor**.
 

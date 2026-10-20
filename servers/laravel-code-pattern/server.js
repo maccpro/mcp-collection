@@ -196,9 +196,20 @@ const TOOLS = [
             }
           ],
           description: 'File path or object with path and content to audit.'
+        },
+        file_path: {
+          type: 'string',
+          description: 'Alternative path of the PHP file to audit.'
+        },
+        code: {
+          type: 'string',
+          description: 'Optional file content (if evaluating in-memory).'
+        },
+        expected_layer: {
+          type: 'string',
+          description: 'Optional expected layer (e.g. Action, DTO, Model, Controller) to assert against.'
         }
-      },
-      required: ['file']
+      }
     }
   }
 ];
@@ -265,14 +276,17 @@ function processInputFiles(filesInput, projectRoot = process.cwd(), activeConfig
         if (fs.existsSync(resolvedPath)) {
           content = fs.readFileSync(resolvedPath, 'utf8');
           filePath = resolvedPath;
+        } else {
+          // Skip deleted or nonexistent files
+          continue;
         }
       } catch (e) {
-        // Skip unreadable files
+        continue;
       }
     } else if (item && typeof item === 'object') {
-      filePath = item.path || '';
-      content = item.content || '';
-      if (!content) {
+      filePath = item.path || item.file_path || item.file || '';
+      content = item.content || item.code || '';
+      if (!content && filePath) {
         const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(projectRoot, filePath);
         if (fs.existsSync(resolvedPath)) {
           try {
@@ -455,7 +469,7 @@ async function handleToolCall(name, args) {
         {
           type: 'text',
           text: JSON.stringify({
-            contract: 'Enterprise Laravel Canonical Architecture v2.1.0',
+            contract: 'Enterprise Laravel Canonical Architecture v2.3.0',
             canonical_flow: activeConfig.architecture.flow,
             flow_description: 'Controller -> FormRequest -> DTO -> Action -> optional Service -> RepositoryInterface -> Repository -> Model -> Database',
             service_optional: activeConfig.architecture.serviceOptional,
@@ -759,9 +773,9 @@ async function handleToolCall(name, args) {
     };
   }
 
-  // 6. validate_layer_contract (Hardened)
+  // 6. validate_layer_contract (Hardened for all 18 Layers)
   if (name === 'validate_layer_contract') {
-    const rawFile = args.file;
+    const rawFile = args.file || args.file_path || { path: args.path || args.file_path, content: args.code || args.content };
     const { parsedFiles, allViolations } = processInputFiles([rawFile], projectProfile.projectRoot, activeConfig);
     const parsed = parsedFiles[0];
 
@@ -775,25 +789,33 @@ async function handleToolCall(name, args) {
     // Architectural Layer Contract Invariants
     const contractChecks = [];
 
+    // Check expected_layer if supplied
+    if (args.expected_layer) {
+      const matchesExpected = layer.toLowerCase() === args.expected_layer.toLowerCase();
+      contractChecks.push({ check: `Matches expected layer (${args.expected_layer})`, passed: matchesExpected });
+    }
+
     if (layer === 'Action') {
       const hasInvoke = parsed.methods.some(m => m.name === '__invoke');
       contractChecks.push({ check: 'Has public __invoke() method', passed: hasInvoke });
       const hasHttpRequest = parsed.imports.some(i => i.classPath.includes('Request'));
       contractChecks.push({ check: 'Decoupled from HTTP Request', passed: !hasHttpRequest });
-      const publicMethods = parsed.methods.filter(m => m.visibility === 'public');
-      contractChecks.push({ check: 'Single-purpose (<= 1 public method)', passed: publicMethods.length <= 1 });
+      const publicDomainMethods = parsed.methods.filter(m => m.visibility === 'public' && !m.name.startsWith('__'));
+      contractChecks.push({ check: 'Single-purpose (<= 1 public domain method)', passed: publicDomainMethods.length <= 1 });
     } else if (layer === 'DTO') {
-      const isImmutable = parsed.cleanCode.includes('readonly class') || !parsed.cleanCode.includes('$this->');
+      const isImmutable = parsed.cleanCode.includes('readonly class') ||
+        /\b(?:public|protected|private)\s+readonly\b/i.test(parsed.cleanCode) ||
+        !parsed.cleanCode.includes('$this->');
       contractChecks.push({ check: 'Pure immutable value object', passed: isImmutable });
       const hasDb = !parsed.cleanCode.includes('DB::') && !parsed.cleanCode.includes('->save(');
       contractChecks.push({ check: 'Zero database persistence calls', passed: hasDb });
     } else if (layer === 'FormRequest') {
-      const hasRules = parsed.methods.some(m => m.name === 'rules');
-      contractChecks.push({ check: 'Contains rules() validation method', passed: hasRules });
+      const hasRules = parsed.methods.some(m => m.name === 'rules' || m.name === 'authorize');
+      contractChecks.push({ check: 'Contains rules() or authorize() validation method', passed: hasRules });
       const hasNoPersistence = !parsed.cleanCode.includes('->save(') && !parsed.cleanCode.includes('DB::');
       contractChecks.push({ check: 'Zero database persistence calls', passed: hasNoPersistence });
     } else if (layer === 'Policy') {
-      const hasNoMutation = !parsed.cleanCode.includes('->save(') && !parsed.cleanCode.includes('->update(');
+      const hasNoMutation = !parsed.cleanCode.includes('->save(') && !parsed.cleanCode.includes('->update(') && !parsed.cleanCode.includes('->delete(');
       contractChecks.push({ check: 'Pure authorization without mutations', passed: hasNoMutation });
     } else if (layer === 'Repository') {
       const implementsIface = parsed.implementsInterfaces.some(i => /RepositoryInterface$|RepositoryContract$/i.test(i));
@@ -811,6 +833,53 @@ async function handleToolCall(name, args) {
       contractChecks.push({ check: 'Thin methods (<= 35 lines per method)', passed: thinMethods });
       const hasNoDirectModel = !parsed.imports.some(i => /Models\\/i.test(i.classPath));
       contractChecks.push({ check: 'No direct Model imports', passed: hasNoDirectModel });
+    } else if (layer === 'Model') {
+      const extendsModel = /Model|Authenticatable|Pivot/i.test(parsed.extendsClass || '');
+      contractChecks.push({ check: 'Extends Eloquent Model/Authenticatable/Pivot', passed: extendsModel });
+      const hasMassGuard = parsed.cleanCode.includes('$fillable') || parsed.cleanCode.includes('$guarded') || parsed.cleanCode.includes('unguarded(');
+      contractChecks.push({ check: 'Mass assignment protection ($fillable or $guarded)', passed: hasMassGuard });
+      if (parsed.isTenantScoped) {
+        const hasTenantTrait = parsed.traits.some(t => /Tenant/i.test(t));
+        contractChecks.push({ check: 'Tenant-scoped model uses tenant trait', passed: hasTenantTrait });
+      }
+    } else if (layer === 'Observer') {
+      const hasQuietly = parsed.cleanCode.includes('saveQuietly') || parsed.cleanCode.includes('updateQuietly') || !parsed.cleanCode.includes('->save(');
+      contractChecks.push({ check: 'Uses saveQuietly/updateQuietly to prevent infinite recursion', passed: hasQuietly });
+    } else if (layer === 'Resource') {
+      const extendsResource = /JsonResource|ResourceCollection|Resource/i.test(parsed.extendsClass || '');
+      contractChecks.push({ check: 'Extends JsonResource or ResourceCollection', passed: extendsResource });
+      const hasToArray = parsed.methods.some(m => m.name === 'toArray');
+      contractChecks.push({ check: 'Defines toArray() serialization method', passed: hasToArray });
+    } else if (layer === 'Response') {
+      const extendsResponse = /JsonResponse|Response/i.test(parsed.extendsClass || '');
+      contractChecks.push({ check: 'Extends standard Response/JsonResponse', passed: extendsResponse });
+    } else if (layer === 'Event') {
+      const hasSerializes = parsed.traits.some(t => t.includes('SerializesModels')) || parsed.cleanCode.includes('SerializesModels');
+      contractChecks.push({ check: 'Uses SerializesModels trait', passed: hasSerializes });
+    } else if (layer === 'Listener') {
+      const hasHandle = parsed.methods.some(m => m.name === 'handle');
+      contractChecks.push({ check: 'Defines handle() method', passed: hasHandle });
+      const hasNoHttp = !parsed.imports.some(i => i.classPath.includes('Illuminate\\Http\\Request'));
+      contractChecks.push({ check: 'Decoupled from HTTP Request', passed: hasNoHttp });
+    } else if (layer === 'RepositoryInterface') {
+      const isInterface = parsed.classType === 'interface';
+      contractChecks.push({ check: 'Declared as interface contract', passed: isInterface });
+    } else if (layer === 'Service') {
+      const isBounded = parsed.totalLines <= 350;
+      contractChecks.push({ check: 'Bounded size (<= 350 lines)', passed: isBounded });
+      const hasNoHttp = !parsed.imports.some(i => i.classPath.includes('Illuminate\\Http\\Request'));
+      contractChecks.push({ check: 'Decoupled from HTTP Request', passed: hasNoHttp });
+    } else if (layer === 'Migration') {
+      const extendsMigration = parsed.extendsClass === 'Migration' || /Migration/i.test(parsed.cleanCode);
+      contractChecks.push({ check: 'Extends Laravel Migration', passed: extendsMigration });
+      const hasUpDown = parsed.methods.some(m => m.name === 'up');
+      contractChecks.push({ check: 'Contains up() migration schema definition', passed: hasUpDown });
+    } else if (layer === 'Exception') {
+      const extendsException = /Exception|Throwable/i.test(parsed.extendsClass || '');
+      contractChecks.push({ check: 'Extends Exception or Throwable', passed: extendsException });
+    } else if (layer === 'Middleware') {
+      const hasHandle = parsed.methods.some(m => m.name === 'handle');
+      contractChecks.push({ check: 'Defines handle($request, Closure $next) method', passed: hasHandle });
     }
 
     const isCompliant = layerViolations.length === 0 && contractChecks.every(c => c.passed);
@@ -894,7 +963,7 @@ rl.on('line', async (line) => {
             },
             serverInfo: {
               name: 'laravel-code-pattern',
-              version: '2.1.0'
+              version: '2.3.0'
             }
           }
         });

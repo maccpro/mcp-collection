@@ -58,6 +58,31 @@ export class CrossModuleChecker {
       }
     }
 
+    // Also scan cleanCode for inline FQN references without use imports
+    const inlineRegex = /\\?(?:App\\Modules|Modules)\\([a-zA-Z0-9_]+)\\(?:Domain\\)?(Models|Repositories|Actions|Services)\\[a-zA-Z0-9_]+/gi;
+    let inlineMatch;
+    while ((inlineMatch = inlineRegex.exec(parsed.cleanCode || '')) !== null) {
+      const otherMod = inlineMatch[1];
+      if (otherMod.toLowerCase() === currentModule.toLowerCase()) continue;
+      const violatingSeg = inlineMatch[2].toLowerCase();
+      const lineNum = (parsed.cleanCode.substring(0, inlineMatch.index).match(/\n/g) || []).length + 1;
+      if (violations.some(v => v.line === lineNum)) continue;
+
+      violations.push({
+        id: `VIO-MOD-${Math.random().toString(36).substr(2, 6).toUpperCase()}`,
+        file: parsed.filePath,
+        fileName: parsed.fileName,
+        line: lineNum,
+        rule: 'cross_module_internal_dependency',
+        category: 'Relational',
+        severity: ruleSeverity,
+        layer: parsed.layer,
+        snippet: inlineMatch[0],
+        message: `Cross-module boundary violation: Module "${currentModule}" directly references internal class "${inlineMatch[0]}" of Module "${otherMod}".`,
+        fix: `Do not reference ${otherMod}'s internal ${violatingSeg}. Expose and reference via ${otherMod}\\Contracts\\ or publish domain Events.`
+      });
+    }
+
     return violations;
   }
 }

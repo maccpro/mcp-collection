@@ -417,7 +417,13 @@ export class RulesEvaluator {
       const staticModelCall = line.match(/\b([A-Z][a-zA-Z0-9_]*)::(where|find|findOrFail|create|update|first|all|query|paginate)\b/);
       if (staticModelCall) {
         const calledClass = staticModelCall[1];
-        const ignoredFacades = ['DB', 'Log', 'Auth', 'Gate', 'Route', 'Cache', 'Event', 'Storage', 'Validator', 'Schema', 'View', 'Response', 'Http', 'Str', 'Arr'];
+        const ignoredFacades = [
+          'DB', 'Log', 'Auth', 'Gate', 'Route', 'Cache', 'Event', 'Storage', 'Validator',
+          'Schema', 'View', 'Response', 'Http', 'Str', 'Arr', 'Carbon', 'CarbonImmutable',
+          'Date', 'Collection', 'LazyCollection', 'File', 'URL', 'Redirect', 'Redis',
+          'Config', 'Cookie', 'Session', 'Artisan', 'Mail', 'Notification', 'Broadcast',
+          'Bus', 'Queue', 'RateLimiter', 'Password', 'App', 'Lang'
+        ];
         if (!ignoredFacades.includes(calledClass)) {
           addViolation(
             'controller_direct_model',
@@ -441,6 +447,8 @@ export class RulesEvaluator {
     }
 
     // Check method sizes, authorization on state-changing methods, and Resource response wrapping
+    const classHasAuthorizeResource = /\b(?:authorizeResource|\$this->authorizeResource)\s*\(/i.test(parsed.cleanCode || '');
+
     for (const method of parsed.methods) {
       if (method.linesCount > 35) {
         addViolation(
@@ -455,7 +463,9 @@ export class RulesEvaluator {
       const mutationMethods = ['store', 'update', 'destroy'];
       if (mutationMethods.includes(method.name.toLowerCase())) {
         const hasFormRequest = /Request\b/i.test(method.params) && !/\bIlluminate\\Http\\Request\b/i.test(method.params) && !/\bRequest\s+\$request\b/i.test(method.params);
-        const hasAuthorizeCall = /\$this->authorize\s*\(|Gate::authorize\s*\(|authorizeResource\s*\(/i.test(method.bodyText || '');
+        const hasAuthorizeCall = classHasAuthorizeResource ||
+          /\$this->authorize\s*\(|Gate::authorize\s*\(|authorizeResource\s*\(/i.test(method.bodyText || '') ||
+          /#\[\s*Authorize\s*\(/i.test(parsed.sourceCode || '');
         if (!hasFormRequest && !hasAuthorizeCall) {
           addViolation(
             'controller_unauthorized_mutation',
@@ -547,7 +557,7 @@ export class RulesEvaluator {
       const line = parsed.lines[idx];
       const lineNum = idx + 1;
 
-      if (/->(save|delete|update|create|saveOrFail|increment|decrement)\s*\(/i.test(line) || /\bDB::(table|insert|update|delete|statement)\b/i.test(line)) {
+      if (/->(save|delete|update|create|saveOrFail|increment|decrement)\s*\(/i.test(line) || /\bDB::(?:table\([^)]+\)->(?:insert|update|delete|truncate)|insert|update|delete|statement|unprepared)\b/i.test(line)) {
         addViolation(
           'policy_mutation_hazard',
           lineNum,
@@ -588,9 +598,9 @@ export class RulesEvaluator {
 
       // Check repository_business_logic: business calculations, emails/notifications, or external HTTP calls
       const body = method.bodyText || '';
-      const hasBusinessCalc = /\b(?:\$price|\$total|\$amount|\$tax|\$discount)\s*[\*\/+-=].*?(?:\$tax|\$vat|\$discount|\b0\.\d+)\b/i.test(body);
+      const hasBusinessCalc = /\b(?:\$price|\$total|\$amount|\$tax|\$discount)\s*(?:\*|\/|\+|-|\+=|-=|\*=|\/=)\s*.*?(?:\$tax|\$vat|\$discount|\b0\.\d+)\b/i.test(body);
       const hasNotification = /\b(?:Http::|Notification::send|\bMail::to)\b/i.test(body);
-      const hasDomainException = /\bthrow\s+new\s+(?!(?:ModelNotFoundException|QueryException|DatabaseException|RuntimeException)\b)[A-Z][a-zA-Z0-9_]*Exception\b/i.test(body);
+      const hasDomainException = /\bthrow\s+new\s+(?!(?:ModelNotFoundException|QueryException|DatabaseException|RuntimeException|InvalidArgumentException|OutOfBoundsException|UnexpectedValueException|RepositoryException)\b)[A-Z][a-zA-Z0-9_]*Exception\b/i.test(body);
 
       if (hasBusinessCalc || hasNotification || hasDomainException) {
         addViolation(
@@ -620,15 +630,15 @@ export class RulesEvaluator {
       }
     }
 
-    // Check action_too_large: public methods count
-    const publicMethods = parsed.methods.filter(m => m.visibility === 'public');
-    if (publicMethods.length > 1) {
-      const methodNames = publicMethods.map(m => m.name).join(', ');
+    // Check action_too_large: public methods count (strictly excluding constructor and magic methods)
+    const publicDomainMethods = parsed.methods.filter(m => m.visibility === 'public' && !m.name.startsWith('__'));
+    if (publicDomainMethods.length > 1) {
+      const methodNames = publicDomainMethods.map(m => m.name).join(', ');
       addViolation(
         'action_too_large',
-        publicMethods[1].startLine,
+        publicDomainMethods[1].startLine,
         `Public methods: ${methodNames}`,
-        `Action class has ${publicMethods.length} public methods. Actions must be single-purpose (preferably single __invoke method).`
+        `Action class has ${publicDomainMethods.length} public domain methods. Actions must be single-purpose (preferably single __invoke method).`
       );
     }
 
@@ -836,16 +846,42 @@ export class RulesEvaluator {
     }
 
     // Check Cache::put with missing TTL (only 2 arguments)
-    const putRegex = /\bCache::put\s*\(([^)]+)\)/gi;
+    const putRegex = /\bCache::put\s*\(/gi;
     let putMatch;
     while ((putMatch = putRegex.exec(code)) !== null) {
-      const args = putMatch[1].split(',');
-      if (args.length < 3) {
+      const startParen = putMatch.index + putMatch[0].length - 1;
+      let depth = 1;
+      let curr = startParen + 1;
+      const len = code.length;
+      let inSingle = false;
+      let inDouble = false;
+      let topLevelCommas = 0;
+
+      while (curr < len && depth > 0) {
+        const c = code[curr];
+        if (c === '\\') { curr += 2; continue; }
+        if (!inDouble && c === '\'') inSingle = !inSingle;
+        else if (!inSingle && c === '"') inDouble = !inDouble;
+        else if (!inSingle && !inDouble) {
+          if (c === '(' || c === '[' || c === '{') depth++;
+          else if (c === ')' || c === ']' || c === '}') {
+            depth--;
+            if (depth === 0) break;
+          } else if (c === ',' && depth === 1) {
+            topLevelCommas++;
+          }
+        }
+        curr++;
+      }
+
+      const fullCall = code.substring(putMatch.index, curr);
+      // Cache::put($key, $value, $ttl) has at least 2 top-level commas (3 arguments)
+      if (topLevelCommas < 2) {
         const lineNum = code.substring(0, putMatch.index).split('\n').length;
         addViolation(
           'cache_unbounded_ttl',
           lineNum,
-          putMatch[0],
+          fullCall.substring(0, 60),
           'Cache::put() invoked without explicit TTL expiration argument.',
           'Provide an explicit TTL expiration argument to Cache::put($key, $value, $ttl).'
         );

@@ -169,6 +169,25 @@ export class RelationalArchitectureEngine {
           metadata: { trait: tr }
         }));
       }
+
+      // 2.5 Method invocations (CALLS edges)
+      const callRegex = /\b([A-Z][a-zA-Z0-9_]*)::(?:where|find|create|update|__invoke|execute)\b/g;
+      let callMatch;
+      while ((callMatch = callRegex.exec(file.cleanCode || '')) !== null) {
+        const targetClass = callMatch[1];
+        if (['DB', 'Log', 'Auth', 'Gate', 'Route', 'Cache', 'Event', 'Storage'].includes(targetClass)) continue;
+        const targetId = this.resolveTargetFqn(targetClass, file, graph) || targetClass;
+        if (targetId && targetId !== sourceId) {
+          if (!graph.edges.some(e => e.source === sourceId && e.target === targetId && e.type === 'CALLS')) {
+            graph.addEdge(new RelationalEdge({
+              source: sourceId,
+              target: targetId,
+              type: 'CALLS',
+              metadata: { called: targetClass }
+            }));
+          }
+        }
+      }
     }
 
     return graph;

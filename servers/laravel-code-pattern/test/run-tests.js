@@ -1,11 +1,15 @@
 import assert from 'node:assert';
 import { spawn } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { StaticAnalyzer } from '../engine/static-analyzer.js';
 import { RulesEvaluator } from '../engine/rules.js';
 import { CrossModuleChecker } from '../engine/cross-module.js';
 import { Reporter } from '../engine/reporter.js';
 import { RelationalArchitectureEngine } from '../engine/relational-architecture.js';
 import { ProjectIntrospector } from '../engine/project-introspector.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 console.log('--- Running Enterprise Laravel Code Pattern Quality Gate Tests ---');
 
@@ -865,9 +869,350 @@ assert.strictEqual(/\breadonly\s+class\b/i.test(parsedReadonlyDto.cleanCode), tr
 console.log('✅ Test 37 Passed: validate_layer_contract invariants verified.');
 
 // ---------------------------------------------------------
+// Test 39: Indented Heredoc / Nowdoc closure without syntax debris
+// ---------------------------------------------------------
+const indentedHeredocCode = `<?php
+namespace App\\Services;
+
+class QueryService
+{
+    public function buildQuery(): string
+    {
+        \$sql = <<<SQL
+            SELECT id, email, created_at
+            FROM users
+            WHERE active = 1
+            SQL;
+
+        return \$sql;
+    }
+}
+`;
+const parsedIndentedHeredoc = StaticAnalyzer.parse('app/Services/QueryService.php', indentedHeredocCode);
+assert.strictEqual(parsedIndentedHeredoc.methods.length, 1);
+assert.strictEqual(parsedIndentedHeredoc.methods[0].name, 'buildQuery');
+assert.ok(!parsedIndentedHeredoc.cleanCode.includes('SQL;'), 'Clean code should strip Heredoc content and delimiter cleanly');
+console.log('✅ Test 39 Passed: Indented Heredoc closing delimiter handled cleanly.');
+
+// ---------------------------------------------------------
+// Test 40: Heredoc in Array Argument with Trailing Comma Delimiter
+// ---------------------------------------------------------
+const commaHeredocCode = `<?php
+namespace App\\Services;
+
+class PromptService
+{
+    public function getPrompts(): array
+    {
+        return [
+            <<<PROMPT
+            You are a Laravel expert.
+            PROMPT,
+            'second_prompt'
+        ];
+    }
+}
+`;
+const parsedCommaHeredoc = StaticAnalyzer.parse('app/Services/PromptService.php', commaHeredocCode);
+assert.strictEqual(parsedCommaHeredoc.methods.length, 1);
+assert.strictEqual(parsedCommaHeredoc.methods[0].name, 'getPrompts');
+assert.ok(!parsedCommaHeredoc.cleanCode.includes('PROMPT'), 'Clean code should strip PROMPT delimiter cleanly');
+console.log('✅ Test 40 Passed: Heredoc delimiter followed by comma handled without residue.');
+
+// ---------------------------------------------------------
+// Test 41: Attribute Comma Masking in Constructor Injection
+// ---------------------------------------------------------
+const attributeConstructorCode = `<?php
+namespace App\\Services;
+
+class NotificationService
+{
+    public function __construct(
+        #[Target(['user', 'admin'], priority: 1)]
+        private readonly MailerInterface \$mailer,
+        #[Config('sms.provider', default: 'twilio')]
+        private readonly SmsClient \$sms
+    ) {}
+}
+`;
+const parsedAttrConstructor = StaticAnalyzer.parse('app/Services/NotificationService.php', attributeConstructorCode);
+assert.strictEqual(parsedAttrConstructor.injections.length, 2, 'Should correctly identify 2 constructor injections despite commas inside attributes');
+assert.ok(parsedAttrConstructor.injections[0].type.includes('MailerInterface'));
+assert.ok(parsedAttrConstructor.injections[1].type.includes('SmsClient'));
+console.log('✅ Test 41 Passed: Attribute comma masking in constructor injection verified.');
+
+// ---------------------------------------------------------
+// Test 42: Grouped Use Statements Extraction
+// ---------------------------------------------------------
+const groupedUseCode = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\{Invoice, Order as ShopOrder, User};
+use App\\Services\\{Billing\\BillingService, Payment\\StripePaymentGateway as Stripe};
+
+class GroupedUseController
+{
+    public function index() {}
+}
+`;
+const parsedGroupedUse = StaticAnalyzer.parse('app/Http/Controllers/GroupedUseController.php', groupedUseCode);
+const importedClasses = parsedGroupedUse.imports.map(i => i.classPath);
+assert.ok(importedClasses.includes('App\\Models\\Invoice'), 'Should extract App\\Models\\Invoice');
+assert.ok(importedClasses.includes('App\\Models\\Order'), 'Should extract App\\Models\\Order');
+assert.ok(importedClasses.includes('App\\Models\\User'), 'Should extract App\\Models\\User');
+assert.ok(importedClasses.includes('App\\Services\\Billing\\BillingService'), 'Should extract nested BillingService');
+assert.ok(importedClasses.includes('App\\Services\\Payment\\StripePaymentGateway'), 'Should extract nested StripePaymentGateway');
+const shopOrderImport = parsedGroupedUse.imports.find(i => i.classPath === 'App\\Models\\Order');
+assert.strictEqual(shopOrderImport.alias, 'ShopOrder', 'Should capture alias for ShopOrder');
+console.log('✅ Test 42 Passed: Grouped use statements and aliases correctly extracted.');
+
+// ---------------------------------------------------------
+// Test 43: Trait Conflict Resolution Body Parsing
+// ---------------------------------------------------------
+const traitConflictCode = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+use App\\Traits\\LoggerTrait;
+use App\\Traits\\AuditTrait;
+
+class Organization extends Model
+{
+    use LoggerTrait, AuditTrait {
+        LoggerTrait::log insteadof AuditTrait;
+        AuditTrait::audit as logAudit;
+    }
+
+    public function getActiveUsers()
+    {
+        return 42;
+    }
+}
+`;
+const parsedTraitConflict = StaticAnalyzer.parse('app/Models/Organization.php', traitConflictCode);
+assert.ok(parsedTraitConflict.traits.includes('LoggerTrait'));
+assert.ok(parsedTraitConflict.traits.includes('AuditTrait'));
+assert.strictEqual(parsedTraitConflict.methods.length, 1);
+assert.strictEqual(parsedTraitConflict.methods[0].name, 'getActiveUsers');
+console.log('✅ Test 43 Passed: Trait conflict resolution block parsed without breaking class body.');
+
+// ---------------------------------------------------------
+// Test 44: Interface / Abstract Method Extraction (no curly braces)
+// ---------------------------------------------------------
+const interfaceCode = `<?php
+namespace App\\Contracts;
+
+interface PaymentGatewayInterface
+{
+    public function charge(int \$amount, string \$currency): bool;
+    public function refund(string \$transactionId): bool;
+}
+`;
+const parsedInterface = StaticAnalyzer.parse('app/Contracts/PaymentGatewayInterface.php', interfaceCode);
+assert.strictEqual(parsedInterface.methods.length, 2);
+assert.strictEqual(parsedInterface.methods[0].name, 'charge');
+assert.strictEqual(parsedInterface.methods[0].bodyText, '');
+assert.strictEqual(parsedInterface.methods[0].linesCount, 1);
+assert.strictEqual(parsedInterface.methods[1].name, 'refund');
+assert.strictEqual(parsedInterface.methods[1].bodyText, '');
+console.log('✅ Test 44 Passed: Interface and abstract methods ending in semicolon parsed with body length 0.');
+
+// ---------------------------------------------------------
+// Test 45: Model Class Prioritization for Suffix Ambiguity (LeaveRequest)
+// ---------------------------------------------------------
+const leaveRequestCode = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class LeaveRequest extends Model
+{
+    protected \$fillable = ['user_id', 'start_date', 'end_date'];
+}
+`;
+const parsedLeaveRequest = StaticAnalyzer.parse('app/Models/LeaveRequest.php', leaveRequestCode);
+assert.strictEqual(parsedLeaveRequest.layer, 'Model', 'LeaveRequest extending Model in app/Models must be classified as Model');
+const leaveViolations = RulesEvaluator.evaluate(parsedLeaveRequest);
+assert.strictEqual(leaveViolations.filter(v => v.rule.startsWith('request_')).length, 0, 'Should not apply FormRequest rules to Model');
+console.log('✅ Test 45 Passed: LeaveRequest extending Model correctly classified as Model.');
+
+// ---------------------------------------------------------
+// Test 46: Model Class Prioritization for Suffix Ambiguity (UserAction)
+// ---------------------------------------------------------
+const userActionCode = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class UserAction extends Model
+{
+    protected \$table = 'user_actions';
+    protected \$fillable = ['user_id', 'action'];
+}
+`;
+const parsedUserAction = StaticAnalyzer.parse('app/Models/UserAction.php', userActionCode);
+assert.strictEqual(parsedUserAction.layer, 'Model', 'UserAction extending Model must be classified as Model');
+const actionViolations = RulesEvaluator.evaluate(parsedUserAction);
+assert.strictEqual(actionViolations.filter(v => v.rule.startsWith('action_')).length, 0, 'Should not apply Action rules to Model');
+console.log('✅ Test 46 Passed: UserAction extending Model correctly classified as Model.');
+
+// ---------------------------------------------------------
+// Test 47: Controller with Carbon / CarbonImmutable Allowed (Whitelisted)
+// ---------------------------------------------------------
+const dateControllerCode = `<?php
+namespace App\\Http\\Controllers;
+
+use Carbon\\Carbon;
+use Carbon\\CarbonImmutable;
+use Illuminate\\Http\\Request;
+use Illuminate\\Http\\JsonResponse;
+
+class CalendarController
+{
+    public function today(): JsonResponse
+    {
+        \$date = Carbon::create(2026, 1, 1);
+        \$next = CarbonImmutable::now()->addDays(7);
+        return response()->json(['date' => \$date->toIso8601String(), 'next' => \$next->toIso8601String()]);
+    }
+}
+`;
+const parsedDateController = StaticAnalyzer.parse('app/Http/Controllers/CalendarController.php', dateControllerCode);
+const dateViolations = RulesEvaluator.evaluate(parsedDateController);
+assert.ok(!dateViolations.some(v => v.rule === 'controller_direct_model'), 'Carbon::create must not be flagged as direct model access');
+console.log('✅ Test 47 Passed: Carbon and CarbonImmutable whitelisted in Controller.');
+
+// ---------------------------------------------------------
+// Test 48: Action with __construct and __invoke (No False action_too_large)
+// ---------------------------------------------------------
+const validActionCode = `<?php
+namespace App\\Actions;
+
+use App\\Services\\BillingService;
+
+class CreateInvoiceAction
+{
+    public function __construct(
+        private readonly BillingService \$billingService
+    ) {}
+
+    public function __invoke(array \$payload): array
+    {
+        return \$this->billingService->generate(\$payload);
+    }
+}
+`;
+const parsedValidAction = StaticAnalyzer.parse('app/Actions/CreateInvoiceAction.php', validActionCode);
+const validActionViolations = RulesEvaluator.evaluate(parsedValidAction);
+assert.ok(!validActionViolations.some(v => v.rule === 'action_too_large'), 'Action with __construct and single __invoke must not trigger action_too_large');
+assert.ok(!validActionViolations.some(v => v.rule === 'action_missing_invoke'), 'Must recognize __invoke method');
+console.log('✅ Test 48 Passed: Action with __construct and single __invoke correctly accepted.');
+
+// ---------------------------------------------------------
+// Test 49: Controller with $this->authorizeResource() in Constructor
+// ---------------------------------------------------------
+const authResourceControllerCode = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Services\\OrderService;
+use Illuminate\\Http\\Response;
+
+class ResourceOrderController
+{
+    public function __construct(private readonly OrderService \$orderService)
+    {
+        \$this->authorizeResource(Order::class, 'order');
+    }
+
+    public function destroy(int \$id): Response
+    {
+        \$this->orderService->cancel(\$id);
+        return response()->noContent();
+    }
+}
+`;
+const parsedAuthResourceController = StaticAnalyzer.parse('app/Http/Controllers/ResourceOrderController.php', authResourceControllerCode);
+const authResourceViolations = RulesEvaluator.evaluate(parsedAuthResourceController);
+assert.ok(!authResourceViolations.some(v => v.rule === 'controller_unauthorized_mutation'), 'authorizeResource in constructor must prevent controller_unauthorized_mutation');
+console.log('✅ Test 49 Passed: Controller authorizeResource() recognized for mutation safety.');
+
+// ---------------------------------------------------------
+// Test 50: Repository Query Clauses Not Flagged as Business Logic
+// ---------------------------------------------------------
+const repoQueryCode = `<?php
+namespace App\\Repositories;
+
+use App\\Models\\Order;
+use App\\Repositories\\Contracts\\OrderRepositoryInterface;
+
+class OrderRepository implements OrderRepositoryInterface
+{
+    public function findByAmount(float \$amount, float \$tax)
+    {
+        return Order::where('amount', \$amount)
+            ->where('tax', \$tax)
+            ->get();
+    }
+}
+`;
+const parsedRepoQuery = StaticAnalyzer.parse('app/Repositories/OrderRepository.php', repoQueryCode);
+const repoViolations = RulesEvaluator.evaluate(parsedRepoQuery);
+assert.ok(!repoViolations.some(v => v.rule === 'repository_business_logic'), 'Repository query clauses must not be falsely flagged as business logic');
+console.log('✅ Test 50 Passed: Repository Eloquent query clauses not flagged as business logic.');
+
+// ---------------------------------------------------------
+// Test 51: Raw SQL Detection with DB::statement and Concatenation
+// ---------------------------------------------------------
+const rawSqlCode = `<?php
+namespace App\\Repositories;
+
+use Illuminate\\Support\\Facades\\DB;
+
+class MaintenanceRepository
+{
+    public function purge(string \$tableName, int \$userId): void
+    {
+        DB::statement("TRUNCATE TABLE " . \$tableName);
+        DB::select("SELECT * FROM audit_logs WHERE user_id = " . \$userId);
+    }
+}
+`;
+const parsedRawSql = StaticAnalyzer.parse('app/Repositories/MaintenanceRepository.php', rawSqlCode);
+assert.strictEqual(parsedRawSql.rawSqlCalls.length, 2, 'Should capture both DB::statement and DB::select');
+assert.ok(parsedRawSql.rawSqlCalls.every(c => c.isRisky), 'Both calls are risky');
+const rawSqlViolations = RulesEvaluator.evaluate(parsedRawSql);
+assert.strictEqual(rawSqlViolations.filter(v => v.rule === 'sql_injection_raw_exposure').length, 2, 'Should trigger sql_injection_raw_exposure on both unsafe calls');
+console.log('✅ Test 51 Passed: Raw SQL injection hazard detected on DB::statement and DB::select with concatenation.');
+
+// ---------------------------------------------------------
+// Test 52: Inline FQN Cross-Module Call and Relational CALLS Edge
+// ---------------------------------------------------------
+const crossModuleInlineCode = `<?php
+namespace App\\Modules\\Inventory\\Services;
+
+class StockService
+{
+    public function reserve(): void
+    {
+        \\App\\Modules\\Billing\\Models\\Invoice::where('status', 'pending')->first();
+    }
+}
+`;
+const parsedInlineCross = StaticAnalyzer.parse('app/Modules/Inventory/Services/StockService.php', crossModuleInlineCode);
+
+const inlineViolations = CrossModuleChecker.check(parsedInlineCross);
+assert.strictEqual(inlineViolations.length, 1);
+assert.strictEqual(inlineViolations[0].rule, 'cross_module_internal_dependency');
+
+const relationalGraph = RelationalArchitectureEngine.buildGraph([parsedInlineCross]);
+const callEdges = relationalGraph.edges.filter(e => e.type === 'CALLS');
+assert.ok(callEdges.length >= 1, 'Should extract CALLS edges for inline static calls');
+console.log('✅ Test 52 Passed: Inline FQN cross-module violation and CALLS relational edges verified.');
+
+// ---------------------------------------------------------
 // Test 38: JSON-RPC -32700 Parse error on invalid JSON
 // ---------------------------------------------------------
-const serverProcess = spawn('node', ['D:/mcp-collection/servers/laravel-code-pattern/server.js'], {
+const serverProcess = spawn('node', [path.resolve(__dirname, '../server.js')], {
     stdio: ['pipe', 'pipe', 'pipe']
 });
 
@@ -882,7 +1227,7 @@ setTimeout(() => {
     assert.ok(stdoutData.includes('-32700'), 'Malformed input must elicit JSON-RPC -32700 error');
     assert.ok(stdoutData.includes('Parse error'), 'Error response should specify Parse error');
     console.log('✅ Test 38 Passed: JSON-RPC -32700 Parse error returned on invalid JSON.');
-    console.log('\n🎉 ALL 38 COMPREHENSIVE ENTERPRISE QUALITY GATE TESTS PASSED! 🎉\n');
+    console.log('\n🎉 ALL 52 COMPREHENSIVE ENTERPRISE QUALITY GATE TESTS PASSED! 🎉\n');
 }, 600);
 
 

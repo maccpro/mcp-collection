@@ -193,6 +193,11 @@ Output strictly the refactored code and an executive explanation in JSON format:
         content = content.replace(/```\s*/g, '').trim();
       }
 
+      const firstBrace = content.indexOf('{');
+      const lastBrace = content.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        content = content.substring(firstBrace, lastBrace + 1);
+      }
       return JSON.parse(content);
     } finally {
       clearTimeout(timeoutId);
